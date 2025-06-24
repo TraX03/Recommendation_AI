@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+env/
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Python egg info
+*.egg-info/
+
+# Logs
+*.log
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+
+# Test/coverage/cache
+.pytest_cache/
+.coverage
+.mypy_cache/
+.dmypy.json
+.pyre/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Ignore Excel cache if any
+~$*.xlsx
