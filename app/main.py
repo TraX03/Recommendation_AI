@@ -22,7 +22,6 @@ async def lifespan(app: FastAPI):
     engine.used_mock = used_mock_data
     engine.preprocess()
 
-    # Inject dependencies
     dependencies.recipes_df = recipes_df
     dependencies.tfidf_matrix = tfidf_matrix
     dependencies.tfidf_vectorizer = tfidf

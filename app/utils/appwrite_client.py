@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Initialize Appwrite client
 client = Client()
 client.set_endpoint("https://cloud.appwrite.io/v1").set_project(
     os.environ.get("APPWRITE_PROJECT_ID")

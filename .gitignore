@@ -36,3 +36,6 @@ dist/
 
 # Ignore Excel cache if any
 ~$*.xlsx
+
+# Ignore app data folder
+app/data/
