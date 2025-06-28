@@ -11,28 +11,20 @@ def generate_coldstart_recommendations(
     tfidf_vectorizer,
     max_recs: int = 10,
 ) -> pd.DataFrame:
-    """
-    Generate cold-start recommendations based on user preferences.
-    """
-
-    # Step 1: Construct a synthetic user profile text
     profile_text = " ".join(
         user_prefs.get("diet", []) + user_prefs.get("region_pref", [])
     )
     user_vector = tfidf_vectorizer.transform([profile_text])
 
-    # Step 2: Compute content similarity
     similarities = cosine_similarity(user_vector, tfidf_matrix).flatten()
     ranked_indices = similarities.argsort()[::-1]
     ranked_df = recipes_df.iloc[ranked_indices].copy()
     ranked_df["similarity"] = similarities[ranked_indices]
 
-    # Step 3: Filter recipes based on avoid_ingredients
     filtered_df = filter_avoid_ingredients(
         ranked_df, user_prefs.get("avoid_ingredients", [])
     )
 
-    # Step 4: Preferred matches (diet + region)
     def is_preferred(text: str) -> bool:
         text = text.lower()
         matches_diet = (
@@ -50,7 +42,6 @@ def generate_coldstart_recommendations(
     preferred = filtered_df[filtered_df["combined_text"].apply(is_preferred)]
     fallback = filtered_df[~filtered_df["combined_text"].apply(is_preferred)]
 
-    # Step 5: Return top preferred, then fallback if not enough
     final_df = (
         pd.concat([preferred.head(max_recs), fallback.head(max_recs)])
         .drop_duplicates()

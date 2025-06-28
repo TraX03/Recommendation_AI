@@ -1,16 +1,17 @@
 from fastapi import APIRouter, HTTPException
 
 from app import dependencies
+from app.constants import USERS_COLLECTION_ID
 from app.models.response_models import RecommendationResponse
 from app.services.coldstart_service import generate_coldstart_recommendations
-from app.utils.appwrite_client import get_user_document
+from app.utils.appwrite_client import get_document_by_id
 
 coldstart_router = APIRouter()
 
 
 def get_user_preferences(user_id: str) -> dict:
     try:
-        user = get_user_document(user_id)
+        user = get_document_by_id(USERS_COLLECTION_ID, user_id)
         return {
             "avoid_ingredients": user.get("avoid_ingredients", []),
             "diet": user.get("diet", []),
@@ -25,7 +26,6 @@ def cold_start_from_user(user_id: str):
     prefs = get_user_preferences(user_id)
 
     recommended_df = generate_coldstart_recommendations(
-        user_id=user_id,
         user_prefs=prefs,
         recipes_df=dependencies.recipes_df,
         tfidf_matrix=dependencies.tfidf_matrix,

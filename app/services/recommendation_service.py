@@ -1,4 +1,5 @@
 import random
+from datetime import datetime, timedelta, timezone
 from typing import Tuple
 
 import numpy as np
@@ -8,9 +9,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import minmax_scale
 
-# Constants
 INTERACTION_WEIGHTS = {
-    "coldStart": {"like": 1.0, "neutral": 0.5, "dislike": 0.0},
+    "coldstart": {"like": 1.0, "neutral": 0.5, "dislike": 0.0},
     "like": 1.0,
     "bookmark": 0.5,
     "view": 0.2,
@@ -30,8 +30,7 @@ class RecommendationEngine:
         self.user_map = None
         self.used_mock = False
 
-    def preprocess(self):
-        # Content-based filtering
+    def preprocess_content_based(self):
         tfidf = TfidfVectorizer(stop_words="english")
         self.tfidf_matrix = tfidf.fit_transform(self.recipes_df["combined_text"])
         self.cosine_sim = cosine_similarity(self.tfidf_matrix, self.tfidf_matrix)
@@ -39,13 +38,29 @@ class RecommendationEngine:
             self.recipes_df.index, index=self.recipes_df["recipe_id"]
         ).drop_duplicates()
 
-        # Collaborative filtering
+    def preprocess_collaborative_based(self):
+        now = datetime.now(timezone.utc)
+        seven_days_ago = now - timedelta(days=7)
+
+        def compute_score(row):
+            if row["type"] == "coldstart":
+                return INTERACTION_WEIGHTS["coldstart"].get(row["value"], 0.0)
+            elif row["type"] == "view":
+                return None  # View scores handled separately
+            else:
+                return INTERACTION_WEIGHTS.get(row["type"], 0.0)
+
         self.interactions_df["score"] = self.interactions_df.apply(
-            lambda row: INTERACTION_WEIGHTS[row["type"]].get(row["value"], 0.0)
-            if row["type"] == "coldStart"
-            else INTERACTION_WEIGHTS.get(row["type"], 0.0),
-            axis=1,
+            compute_score, axis=1
         )
+
+        view_scores = self.compute_view_decay_scores(seven_days_ago)
+
+        non_view_df = self.interactions_df[self.interactions_df["type"] != "view"][
+            ["user_id", "recipe_id", "type", "score", "created_at"]
+        ]
+
+        self.interactions_df = pd.concat([non_view_df, view_scores], ignore_index=True)
 
         self.user_map = {
             uid: i for i, uid in enumerate(self.interactions_df["user_id"].unique())
@@ -53,6 +68,7 @@ class RecommendationEngine:
         self.recipe_map = {
             rid: i for i, rid in enumerate(self.interactions_df["recipe_id"].unique())
         }
+
         self.interactions_df["user_idx"] = self.interactions_df["user_id"].map(
             self.user_map
         )
@@ -70,8 +86,32 @@ class RecommendationEngine:
 
         self.recipe_sim_matrix = cosine_similarity(interaction_matrix.T)
 
+    def compute_view_decay_scores(self, since: datetime) -> pd.DataFrame:
+        view_df = self.interactions_df[self.interactions_df["type"] == "view"].explode(
+            "timestamps"
+        )
+        view_df["timestamp"] = pd.to_datetime(view_df["timestamps"], utc=True)
+
+        recent_views = view_df[view_df["timestamp"] >= since]
+
+        view_counts = (
+            recent_views.groupby(["user_id", "recipe_id"])
+            .agg(view_count=("timestamp", "count"), created_at=("timestamp", "max"))
+            .reset_index()
+        )
+
+        view_counts["score"] = view_counts["view_count"].apply(
+            lambda c: min(0.2 * np.log1p(c), 0.6)
+        )
+        view_counts["type"] = "view"
+
+        return view_counts[["user_id", "recipe_id", "type", "score", "created_at"]]
+
+    def preprocess(self):
+        self.preprocess_content_based()
+        self.preprocess_collaborative_based()
+
     def adaptive_weights(self, recipe_id: str) -> Tuple[float, float]:
-        """Adjust weights based on recipe interaction density."""
         count = self.interactions_df[
             self.interactions_df["recipe_id"] == str(recipe_id)
         ].shape[0]

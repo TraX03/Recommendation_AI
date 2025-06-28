@@ -5,9 +5,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app import dependencies
 from app.api.coldstart import coldstart_router
+from app.api.log_view import log_view_router
 from app.api.recommend import recommend_for_home, recommend_router
 from app.services.recommendation_service import RecommendationEngine
-from app.utils.loader_utils import fetch_interaction_data, fetch_recipe_data
+from app.utils.load_utils import fetch_interaction_data, fetch_recipe_data
 
 
 @asynccontextmanager
@@ -37,5 +38,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app.include_router(recommend_router)
-app.include_router(coldstart_router)
+app.include_router(recommend_router, prefix="/recommendation")
+app.include_router(coldstart_router, prefix="/onboarding")
+app.include_router(log_view_router, prefix="/interactions")

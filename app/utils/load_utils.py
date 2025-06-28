@@ -1,14 +1,14 @@
 import json
-import os
 from typing import Tuple
 
 import pandas as pd
 
+from app.constants import INTERACTIONS_COLLECTION_ID, RECIPES_COLLECTION_ID
 from app.utils.appwrite_client import fetch_documents
 
 
 def fetch_recipe_data() -> pd.DataFrame:
-    documents = fetch_documents(os.environ["APPWRITE_RECIPES_COLLECTION_ID"])
+    documents = fetch_documents(RECIPES_COLLECTION_ID)
     data = []
 
     for doc in documents:
@@ -48,7 +48,7 @@ def fetch_recipe_data() -> pd.DataFrame:
 
 
 def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
-    documents = fetch_documents(os.environ["APPWRITE_INTERACTIONS_COLLECTION_ID"])
+    documents = fetch_documents(INTERACTIONS_COLLECTION_ID)
     df = pd.DataFrame(
         [
             {
@@ -57,6 +57,7 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
                 "recipe_id": d.get("item_id"),
                 "type": d.get("type"),
                 "value": d.get("value"),
+                "timestamps": d.get("timestamps"),
                 "created_at": d.get("created_at"),
             }
             for d in documents
@@ -64,11 +65,11 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
     )
 
     used_mock = False
-    if len(df) < 1000:
-        mock_path = "mockData/user_interactions.xlsx"
-        if os.path.exists(mock_path):
-            mock_df = pd.read_excel(mock_path)
-            df = pd.concat([df, mock_df], ignore_index=True)
-            used_mock = True
+    # if len(df) < 1000:
+    #     mock_path = "mockData/user_interactions.xlsx"
+    #     if os.path.exists(mock_path):
+    #         mock_df = pd.read_excel(mock_path)
+    #         df = pd.concat([df, mock_df], ignore_index=True)
+    #         used_mock = True
 
     return df, used_mock

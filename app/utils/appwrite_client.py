@@ -1,33 +1,39 @@
-import os
+from typing import List
 
 from appwrite.client import Client
+from appwrite.id import ID
 from appwrite.query import Query
 from appwrite.services.databases import Databases
 from dotenv import load_dotenv
+
+from app.constants import APPWRITE_API_KEY, APPWRITE_DATABASE_ID, APPWRITE_PROJECT_ID
 
 load_dotenv()
 
 client = Client()
 client.set_endpoint("https://cloud.appwrite.io/v1").set_project(
-    os.environ.get("APPWRITE_PROJECT_ID")
-).set_key(os.environ.get("APPWRITE_API_KEY"))
+    APPWRITE_PROJECT_ID
+).set_key(APPWRITE_API_KEY)
 
 database = Databases(client)
 
 
 def fetch_documents(
-    collection_id: str, database_id: str = None, limit: int = 100
+    collection_id: str,
+    limit: int = 300,
+    custom_queries: list = None,
 ) -> list[dict]:
-    """Fetch all documents from a given Appwrite collection, paginated."""
-    if database_id is None:
-        database_id = os.environ["APPWRITE_DATABASE_ID"]
+    if custom_queries is None:
+        custom_queries = []
 
     documents, offset = [], 0
     while True:
+        queries = [*custom_queries, Query.limit(limit), Query.offset(offset)]
+
         result = database.list_documents(
-            database_id=database_id,
+            database_id=APPWRITE_DATABASE_ID,
             collection_id=collection_id,
-            queries=[Query.limit(limit), Query.offset(offset)],
+            queries=queries,
         )
         docs = result["documents"]
         if not docs:
@@ -37,13 +43,66 @@ def fetch_documents(
     return documents
 
 
-def get_user_document(user_id: str) -> dict:
-    """Fetch a single user document by ID."""
+def create_document(
+    collection_id: str,
+    data: dict,
+    document_id: str = None,
+) -> dict:
+    if document_id is None:
+        document_id = ID.unique()
+
     try:
-        return database.get_document(
-            database_id=os.environ["APPWRITE_DATABASE_ID"],
-            collection_id=os.environ["APPWRITE_USERS_COLLECTION_ID"],
-            document_id=user_id,
+        return database.create_document(
+            database_id=APPWRITE_DATABASE_ID,
+            collection_id=collection_id,
+            document_id=document_id,
+            data=data,
         )
     except Exception as e:
-        raise e
+        raise RuntimeError(f"Failed to create document in {collection_id}: {e}")
+
+
+def get_document_by_id(
+    collection_id: str,
+    document_id: str,
+) -> dict:
+    try:
+        return database.get_document(
+            database_id=APPWRITE_DATABASE_ID,
+            collection_id=collection_id,
+            document_id=document_id,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to get document {document_id}: {e}")
+
+
+def update_document(
+    collection_id: str,
+    document_id: str,
+    data: dict,
+) -> dict:
+    try:
+        return database.update_document(
+            database_id=APPWRITE_DATABASE_ID,
+            collection_id=collection_id,
+            document_id=document_id,
+            data=data,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to update document {document_id}: {e}")
+
+
+def list_documents(collection_id: str, queries: List = None) -> List[dict]:
+    if queries is None:
+        queries = []
+
+    try:
+        result = database.list_documents(
+            database_id=APPWRITE_DATABASE_ID,
+            collection_id=collection_id,
+            queries=queries,
+        )
+        return result["documents"]
+    except Exception as err:
+        print(f"list_documents failed: {err}")
+        return []

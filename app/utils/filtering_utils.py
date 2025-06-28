@@ -6,7 +6,6 @@ from app.utils.shelve_utils import get_last_recommendations
 
 
 def filter_recent_seen(df: pd.DataFrame, user_id: str) -> pd.DataFrame:
-    """Filter out recipes recently seen by the user."""
     seen = {
         rid
         for round_recipes in get_last_recommendations(user_id)
@@ -18,7 +17,6 @@ def filter_recent_seen(df: pd.DataFrame, user_id: str) -> pd.DataFrame:
 def filter_avoid_ingredients(
     df: pd.DataFrame, avoid_ingredients: List[str]
 ) -> pd.DataFrame:
-    """Filter out recipes that contain ingredients the user wants to avoid."""
     if not avoid_ingredients:
         return df
 
