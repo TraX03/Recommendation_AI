@@ -16,27 +16,80 @@ INTERACTION_WEIGHTS = {
     "view": 0.2,
 }
 
+FEED_TYPES = ["recipe", "discussion", "tip", "community"]
+
+ID_COLUMN_MAP = {
+    "recipe": "recipe_id",
+    "tip": "post_id",
+    "discussion": "post_id",
+    "community": "community_id",
+}
+
+
+def build_tfidf_and_similarity(df: pd.DataFrame, id_col: str):
+    tfidf = TfidfVectorizer(stop_words="english")
+    tfidf_matrix = tfidf.fit_transform(df["combined_text"])
+    cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
+    indices = pd.Series(df.index, index=df[id_col]).drop_duplicates()
+
+    return {
+        "tfidf_matrix": tfidf_matrix,
+        "cosine_sim": cosine_sim,
+        "indices": indices,
+    }
+
 
 class RecommendationEngine:
-    def __init__(self, recipes_df: pd.DataFrame, interactions_df: pd.DataFrame):
+    def __init__(
+        self,
+        recipes_df: pd.DataFrame,
+        interactions_df: pd.DataFrame,
+        tips_df: pd.DataFrame = pd.DataFrame(),
+        discussions_df: pd.DataFrame = pd.DataFrame(),
+        communities_df: pd.DataFrame = pd.DataFrame(),
+    ):
         self.recipes_df = recipes_df
         self.interactions_df = interactions_df
+        self.tips_df = tips_df
+        self.discussions_df = discussions_df
+        self.communities_df = communities_df
 
-        self.tfidf_matrix = None
-        self.cosine_sim = None
-        self.indices = None
-        self.recipe_map = None
-        self.recipe_sim_matrix = None
-        self.user_map = None
-        self.used_mock = False
+        self.similarity_models = {
+            "recipe": {},
+            "tip": {},
+            "discussion": {},
+            "community": {},
+        }
+
+        self.sim_matrices = {
+            "recipe": {},
+            "tip": {},
+            "discussion": {},
+            "community": {},
+        }
+
+        self.data_sufficient = False
 
     def preprocess_content_based(self):
-        tfidf = TfidfVectorizer(stop_words="english")
-        self.tfidf_matrix = tfidf.fit_transform(self.recipes_df["combined_text"])
-        self.cosine_sim = cosine_similarity(self.tfidf_matrix, self.tfidf_matrix)
-        self.indices = pd.Series(
-            self.recipes_df.index, index=self.recipes_df["recipe_id"]
-        ).drop_duplicates()
+        if not self.recipes_df.empty:
+            self.similarity_models["recipe"] = build_tfidf_and_similarity(
+                self.recipes_df, "recipe_id"
+            )
+
+        if not self.tips_df.empty:
+            self.similarity_models["tip"] = build_tfidf_and_similarity(
+                self.tips_df, "post_id"
+            )
+
+        if not self.discussions_df.empty:
+            self.similarity_models["discussion"] = build_tfidf_and_similarity(
+                self.discussions_df, "post_id"
+            )
+
+        if not self.communities_df.empty:
+            self.similarity_models["community"] = build_tfidf_and_similarity(
+                self.communities_df, "community_id"
+            )
 
     def preprocess_collaborative_based(self):
         now = datetime.now(timezone.utc)
@@ -46,7 +99,7 @@ class RecommendationEngine:
             if row["type"] == "coldstart":
                 return INTERACTION_WEIGHTS["coldstart"].get(row["value"], 0.0)
             elif row["type"] == "view":
-                return None  # View scores handled separately
+                return None  # handled separately
             else:
                 return INTERACTION_WEIGHTS.get(row["type"], 0.0)
 
@@ -57,34 +110,42 @@ class RecommendationEngine:
         view_scores = self.compute_view_decay_scores(seven_days_ago)
 
         non_view_df = self.interactions_df[self.interactions_df["type"] != "view"][
-            ["user_id", "recipe_id", "type", "score", "created_at"]
+            ["user_id", "item_id", "item_type", "type", "score", "created_at"]
         ]
 
         self.interactions_df = pd.concat([non_view_df, view_scores], ignore_index=True)
 
-        self.user_map = {
-            uid: i for i, uid in enumerate(self.interactions_df["user_id"].unique())
-        }
-        self.recipe_map = {
-            rid: i for i, rid in enumerate(self.interactions_df["recipe_id"].unique())
-        }
+        self.sim_matrices = {}
+        for content_type in ["recipe", "tip", "discussion", "community"]:
+            df = self.interactions_df[self.interactions_df["item_type"] == content_type]
 
-        self.interactions_df["user_idx"] = self.interactions_df["user_id"].map(
-            self.user_map
-        )
-        self.interactions_df["recipe_idx"] = self.interactions_df["recipe_id"].map(
-            self.recipe_map
-        )
+            if df.empty:
+                continue
 
-        interaction_matrix = csr_matrix(
-            (
-                self.interactions_df["score"],
-                (self.interactions_df["user_idx"], self.interactions_df["recipe_idx"]),
-            ),
-            shape=(len(self.user_map), len(self.recipe_map)),
-        )
+            user_map = {uid: i for i, uid in enumerate(df["user_id"].unique())}
+            item_map = {iid: i for i, iid in enumerate(df["item_id"].unique())}
 
-        self.recipe_sim_matrix = cosine_similarity(interaction_matrix.T)
+            if len(user_map) == 0 or len(item_map) == 0:
+                continue
+
+            df["user_idx"] = df["user_id"].map(user_map)
+            df["item_idx"] = df["item_id"].map(item_map)
+
+            interaction_matrix = csr_matrix(
+                (
+                    df["score"],
+                    (df["user_idx"], df["item_idx"]),
+                ),
+                shape=(len(user_map), len(item_map)),
+            )
+
+            sim_matrix = cosine_similarity(interaction_matrix.T)
+
+            self.sim_matrices[content_type] = {
+                "matrix": sim_matrix,
+                "item_map": item_map,
+                "item_idx_to_id": {v: k for k, v in item_map.items()},
+            }
 
     def compute_view_decay_scores(self, since: datetime) -> pd.DataFrame:
         view_df = self.interactions_df[self.interactions_df["type"] == "view"].explode(
@@ -95,7 +156,7 @@ class RecommendationEngine:
         recent_views = view_df[view_df["timestamp"] >= since]
 
         view_counts = (
-            recent_views.groupby(["user_id", "recipe_id"])
+            recent_views.groupby(["user_id", "item_id", "item_type"])
             .agg(view_count=("timestamp", "count"), created_at=("timestamp", "max"))
             .reset_index()
         )
@@ -105,15 +166,17 @@ class RecommendationEngine:
         )
         view_counts["type"] = "view"
 
-        return view_counts[["user_id", "recipe_id", "type", "score", "created_at"]]
+        return view_counts[
+            ["user_id", "item_id", "item_type", "type", "score", "created_at"]
+        ]
 
     def preprocess(self):
         self.preprocess_content_based()
         self.preprocess_collaborative_based()
 
-    def adaptive_weights(self, recipe_id: str) -> Tuple[float, float]:
+    def adaptive_weights(self, item_id: str) -> Tuple[float, float]:
         count = self.interactions_df[
-            self.interactions_df["recipe_id"] == str(recipe_id)
+            self.interactions_df["item_id"] == str(item_id)
         ].shape[0]
         total = len(self.interactions_df)
         ratio = count / total if total > 0 else 0
@@ -122,29 +185,42 @@ class RecommendationEngine:
         return cbf_weight, cf_weight
 
     def get_hybrid_recommendations(
-        self, recipe_id: str, cbf_weight=0.6, cf_weight=0.4, top_k=100, sample_n=20
+        self,
+        item_id: str,
+        content_type: str,
+        cbf_weight=0.6,
+        cf_weight=0.4,
+        top_k=100,
+        sample_n=40,
     ) -> pd.DataFrame:
-        try:
-            cbf_idx = self.indices[recipe_id]
-        except KeyError:
-            return pd.DataFrame(
-                columns=["recipe_id", "title", "image", "author_id", "combined_text"]
-            )
+        if item_id not in self.similarity_models.get(content_type, {}).get(
+            "indices", {}
+        ):
+            return pd.DataFrame()
 
-        cbf_scores = self.cosine_sim[cbf_idx]
-        cf_scores_full = np.zeros_like(cbf_scores)
+        cbf_idx = self.similarity_models[content_type]["indices"][item_id]
+        cbf_scores = self.similarity_models[content_type]["cosine_sim"][cbf_idx]
+        cbf_scores_norm = minmax_scale(cbf_scores)
 
-        cf_idx = self.recipe_map.get(str(recipe_id))
-        if cf_idx is not None:
-            cf_scores_partial = self.recipe_sim_matrix[cf_idx]
-            for rid_str, partial_idx in self.recipe_map.items():
-                full_idx = self.indices.get(rid_str)
+        if (
+            content_type in self.sim_matrices
+            and item_id in self.sim_matrices[content_type]["item_map"]
+        ):
+            cf_idx = self.sim_matrices[content_type]["item_map"][item_id]
+            cf_scores_partial = self.sim_matrices[content_type]["matrix"][cf_idx]
+
+            cf_scores_full = np.zeros_like(cbf_scores)
+            for rid_str, partial_idx in self.sim_matrices[content_type][
+                "item_map"
+            ].items():
+                full_idx = self.similarity_models[content_type]["indices"].get(rid_str)
                 if full_idx is not None:
                     cf_scores_full[full_idx] = cf_scores_partial[partial_idx]
 
-        cbf_scores_norm = minmax_scale(cbf_scores)
-        cf_scores_norm = minmax_scale(cf_scores_full)
-        hybrid_scores = cbf_weight * cbf_scores_norm + cf_weight * cf_scores_norm
+            cf_scores_norm = minmax_scale(cf_scores_full)
+            hybrid_scores = cbf_weight * cbf_scores_norm + cf_weight * cf_scores_norm
+        else:
+            hybrid_scores = cbf_scores_norm
 
         sim_scores = sorted(
             [(i, score) for i, score in enumerate(hybrid_scores) if i != cbf_idx],
@@ -155,19 +231,48 @@ class RecommendationEngine:
         sampled_indices = random.sample(sim_scores, min(sample_n, len(sim_scores)))
         hybrid_indices = [i for i, _ in sampled_indices]
 
-        return self.recipes_df.iloc[hybrid_indices][
-            ["recipe_id", "title", "image", "author_id", "combined_text"]
-        ]
+        df = (
+            self.communities_df
+            if content_type == "community"
+            else getattr(self, f"{content_type}s_df")
+        )
 
-    def get_trending_recipes(self, n=20) -> pd.DataFrame:
-        top_recipe_ids = (
-            self.interactions_df[self.interactions_df["type"] == "like"]
-            .groupby("recipe_id")
+        if content_type == "community" and "name" in df.columns:
+            df = df.rename(columns={"name": "title"})
+
+        if "author_id" not in df.columns:
+            df = df.copy()
+            df["author_id"] = ""
+
+        df["author_id"] = df["author_id"].fillna("").astype(str)
+
+        id_col = {"recipe": "recipe_id", "community": "community_id"}.get(
+            content_type, "post_id"
+        )
+
+        return df.iloc[hybrid_indices][[id_col, "title", "image", "author_id"]]
+
+    def get_trending_items(self, content_type: str, n: int = 20) -> pd.DataFrame:
+        df_map = {
+            "recipe": self.recipes_df,
+            "tip": self.tips_df,
+            "discussion": self.discussions_df,
+            "community": self.communities_df,
+        }
+
+        id_col = ID_COLUMN_MAP[content_type]
+        content_df = df_map[content_type]
+
+        top_ids = (
+            self.interactions_df[
+                (self.interactions_df["type"] == "like")
+                & (self.interactions_df["item_type"] == content_type)
+            ]
+            .groupby("item_id")
             .size()
             .sort_values(ascending=False)
             .head(n)
             .index
         )
-        return self.recipes_df[self.recipes_df["recipe_id"].isin(top_recipe_ids)][
-            ["recipe_id", "title"]
-        ]
+
+        return content_df[content_df[id_col].isin(top_ids)]

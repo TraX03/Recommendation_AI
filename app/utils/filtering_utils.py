@@ -2,16 +2,21 @@ from typing import List
 
 import pandas as pd
 
-from app.utils.shelve_utils import get_last_recommendations
+from app.constants import RECOMMENDATION_DATA_COLLECTION_ID
+from app.utils.appwrite_client import get_document_by_id
 
 
-def filter_recent_seen(df: pd.DataFrame, user_id: str) -> pd.DataFrame:
-    seen = {
-        rid
-        for round_recipes in get_last_recommendations(user_id)
-        for rid in round_recipes[:60]
-    }
-    return df[~df["recipe_id"].isin(seen)]
+def filter_recent_seen(df: pd.DataFrame, user_id: str, id_col: str) -> pd.DataFrame:
+    try:
+        doc = get_document_by_id(
+            collection_id=RECOMMENDATION_DATA_COLLECTION_ID,
+            document_id=user_id,
+        )
+        recent_ids = set(doc.get("last_recommendations", []))
+    except Exception:
+        recent_ids = set()
+
+    return df[~df[id_col].isin(recent_ids)]
 
 
 def filter_avoid_ingredients(

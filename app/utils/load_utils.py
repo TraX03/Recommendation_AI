@@ -1,10 +1,25 @@
 import json
+import re
 from typing import Tuple
 
 import pandas as pd
 
-from app.constants import INTERACTIONS_COLLECTION_ID, RECIPES_COLLECTION_ID
+from app.constants import (
+    COMMUNITIES_COLLECTION_ID,
+    INTERACTIONS_COLLECTION_ID,
+    POSTS_COLLECTION_ID,
+    RECIPES_COLLECTION_ID,
+)
 from app.utils.appwrite_client import fetch_documents
+
+
+def clean(text):
+    if not isinstance(text, str):
+        return ""
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s]", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def fetch_recipe_data() -> pd.DataFrame:
@@ -17,9 +32,11 @@ def fetch_recipe_data() -> pd.DataFrame:
         except Exception:
             ingredients = []
 
+        title = doc.get("title")
         tags = doc.get("tags", [])
         mealtime = doc.get("mealtime", [])
-        cuisine = doc.get("area", "") or doc.get("category", "")
+        category = doc.get("category", "")
+        cuisine = doc.get("area", "")
         description = doc.get("description", "") or ""
 
         instructions = [
@@ -29,7 +46,17 @@ def fetch_recipe_data() -> pd.DataFrame:
         ]
 
         combined_text = " ".join(
-            ingredients + tags + mealtime + [cuisine, description] + instructions
+            map(
+                clean,
+                [title or ""]
+                + ingredients
+                + tags
+                + mealtime
+                + [cuisine]
+                + category
+                + [description]
+                + instructions,
+            )
         )
 
         image = doc.get("image", [""])[0] if doc.get("image") else ""
@@ -37,10 +64,63 @@ def fetch_recipe_data() -> pd.DataFrame:
         data.append(
             {
                 "recipe_id": doc["$id"],
-                "title": doc.get("title"),
+                "title": title,
+                "category": category,
                 "combined_text": combined_text,
                 "image": image,
                 "author_id": doc.get("author_id"),
+            }
+        )
+
+    return pd.DataFrame(data)
+
+
+def fetch_post_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    documents = fetch_documents(POSTS_COLLECTION_ID)
+    tips_data = []
+    discussion_data = []
+
+    for doc in documents:
+        post_type = doc.get("type", "").lower()
+
+        title = doc.get("title", "")
+        content = doc.get("content", "")
+        tags = doc.get("tags", [])
+
+        post = {
+            "post_id": doc["$id"],
+            "title": title,
+            "author_id": doc.get("author_id", ""),
+            "image": doc.get("image", [""])[0] if doc.get("image") else "",
+            "combined_text": " ".join(map(clean, [title, content] + tags)),
+        }
+
+        if post_type == "tips":
+            tips_data.append(post)
+        elif post_type == "discussion":
+            discussion_data.append(post)
+
+    tips_df = pd.DataFrame(tips_data)
+    discussion_df = pd.DataFrame(discussion_data)
+
+    return tips_df, discussion_df
+
+
+def fetch_community_data() -> pd.DataFrame:
+    documents = fetch_documents(COMMUNITIES_COLLECTION_ID)
+    data = []
+
+    for doc in documents:
+        name = doc.get("name", "")
+        description = doc.get("description", "")
+        tags = doc.get("tags", [])
+
+        data.append(
+            {
+                "community_id": doc["$id"],
+                "name": name,
+                "image": doc.get("image", ""),
+                "combined_text": " ".join(map(clean, [name, description] + tags)),
             }
         )
 
@@ -54,8 +134,9 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
             {
                 "interaction_id": d["$id"],
                 "user_id": d.get("user_id"),
-                "recipe_id": d.get("item_id"),
+                "item_id": d.get("item_id"),
                 "type": d.get("type"),
+                "item_type": d.get("item_type"),
                 "value": d.get("value"),
                 "timestamps": d.get("timestamps"),
                 "created_at": d.get("created_at"),
@@ -64,12 +145,12 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
         ]
     )
 
-    used_mock = False
+    data_sufficient = len(df) >= 1000
     # if len(df) < 1000:
-    #     mock_path = "mockData/user_interactions.xlsx"
-    #     if os.path.exists(mock_path):
-    #         mock_df = pd.read_excel(mock_path)
-    #         df = pd.concat([df, mock_df], ignore_index=True)
-    #         used_mock = True
+    # #     mock_path = "mockData/user_interactions.xlsx"
+    # #     if os.path.exists(mock_path):
+    # #         mock_df = pd.read_excel(mock_path)
+    # #         df = pd.concat([df, mock_df], ignore_index=True)
+    # #         used_mock = True
 
-    return df, used_mock
+    return df, data_sufficient

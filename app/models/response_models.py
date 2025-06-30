@@ -3,8 +3,15 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
-class RecommendationResponse(BaseModel):
-    recipe_ids: List[str]
+class PostList(BaseModel):
+    post_ids: List[str]
     titles: List[str]
     images: List[str]
     author_ids: Optional[List[str]] = None
+
+
+class RecommendationResponse(BaseModel):
+    recipe: PostList
+    tip: PostList
+    discussion: PostList
+    community: PostList
