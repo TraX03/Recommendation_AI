@@ -15,3 +15,29 @@ COMMUNITIES_COLLECTION_ID = os.environ.get("APPWRITE_COMMUNITIES_COLLECTION_ID")
 RECOMMENDATION_DATA_COLLECTION_ID = os.environ.get(
     "APPWRITE_RECOMMENDATION_DATA_COLLECTION_ID"
 )
+
+INTERACTION_WEIGHTS = {
+    "coldstart": {"like": 1.0, "neutral": 0.5, "dislike": 0.0},
+    "like": 1.0,
+    "bookmark": 0.5,
+    "view": 0.2,
+}
+
+CONTENT_TYPE_MAP = {
+    "recipe": {
+        "id_col": "recipe_id",
+        "attr": "recipes_df",
+    },
+    "tip": {
+        "id_col": "post_id",
+        "attr": "tips_df",
+    },
+    "discussion": {
+        "id_col": "post_id",
+        "attr": "discussions_df",
+    },
+    "community": {
+        "id_col": "community_id",
+        "attr": "communities_df",
+    },
+}

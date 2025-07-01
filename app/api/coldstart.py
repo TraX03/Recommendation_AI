@@ -1,30 +1,18 @@
 import json
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app import dependencies
-from app.constants import RECOMMENDATION_DATA_COLLECTION_ID, USERS_COLLECTION_ID
+from app.constants import CONTENT_TYPE_MAP, RECOMMENDATION_DATA_COLLECTION_ID
 from app.models.response_models import PostList
-from app.services.coldstart_service import (
-    generate_post_coldstart,
-    generate_recipe_coldstart,
-)
-from app.utils.appwrite_client import create_or_update_document, get_document_by_id
+from app.services.coldstart_service import generate_coldstart
+from app.services.recommendation_service import RecommendationEngine
+from app.utils.appwrite_client import create_or_update_document
+from app.utils.load_utils import get_user_preferences
 
 coldstart_router = APIRouter()
-
-
-def get_user_preferences(user_id: str) -> dict:
-    try:
-        user = get_document_by_id(USERS_COLLECTION_ID, user_id)
-        return {
-            "avoid_ingredients": user.get("avoid_ingredients", []),
-            "diet": user.get("diet", []),
-            "region_pref": user.get("region_pref", []),
-        }
-    except Exception:
-        raise HTTPException(status_code=404, detail="User not found")
 
 
 def to_post_list(df: pd.DataFrame, id_col: str = "post_id") -> PostList:
@@ -38,36 +26,36 @@ def to_post_list(df: pd.DataFrame, id_col: str = "post_id") -> PostList:
 
 @coldstart_router.post("/coldstart/{user_id}", response_model=PostList)
 def cold_start_from_user(user_id: str) -> PostList:
+    engine: RecommendationEngine = dependencies.engine
     prefs = get_user_preferences(user_id)
+    tfidf = TfidfVectorizer(stop_words="english")
 
-    recipe_df = generate_recipe_coldstart(
+    recipe_df = generate_coldstart(
         user_prefs=prefs,
-        recipes_df=dependencies.recipes_df,
-        tfidf_matrix=dependencies.tfidf_matrix,
-        tfidf_vectorizer=dependencies.tfidf_vectorizer,
+        df=engine.recipes_df,
+        tfidf_vectorizer=tfidf,
+        id_column="recipe_id",
+        avoid_filter=True,
+        fit_new=True,
         max_recs=10,
     )
 
+    post_sources = {
+        ctype: (config["id_col"], getattr(engine, config["attr"]))
+        for ctype, config in CONTENT_TYPE_MAP.items()
+        if ctype != "recipe"
+    }
+
     suggestions = {
-        "tip": generate_post_coldstart(
+        key: generate_coldstart(
             user_prefs=prefs,
-            df=dependencies.engine.tips_df,
-            tfidf_vectorizer=dependencies.tfidf_vectorizer,
+            df=source_df,
+            tfidf_vectorizer=tfidf,
+            id_column=id_col,
+            fit_new=False,
             max_recs=10,
-        )["post_id"].tolist(),
-        "discussion": generate_post_coldstart(
-            user_prefs=prefs,
-            df=dependencies.engine.discussions_df,
-            tfidf_vectorizer=dependencies.tfidf_vectorizer,
-            max_recs=10,
-        )["post_id"].tolist(),
-        "community": generate_post_coldstart(
-            user_prefs=prefs,
-            df=dependencies.engine.communities_df,
-            tfidf_vectorizer=dependencies.tfidf_vectorizer,
-            id_column="community_id",
-            max_recs=10,
-        )["community_id"].tolist(),
+        )[id_col].tolist()
+        for key, (id_col, source_df) in post_sources.items()
     }
 
     create_or_update_document(

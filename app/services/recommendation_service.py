@@ -1,3 +1,4 @@
+import json
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Tuple
@@ -9,34 +10,22 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import minmax_scale
 
-INTERACTION_WEIGHTS = {
-    "coldstart": {"like": 1.0, "neutral": 0.5, "dislike": 0.0},
-    "like": 1.0,
-    "bookmark": 0.5,
-    "view": 0.2,
-}
-
-FEED_TYPES = ["recipe", "discussion", "tip", "community"]
-
-ID_COLUMN_MAP = {
-    "recipe": "recipe_id",
-    "tip": "post_id",
-    "discussion": "post_id",
-    "community": "community_id",
-}
+from app.constants import (
+    CONTENT_TYPE_MAP,
+    INTERACTION_WEIGHTS,
+    RECOMMENDATION_DATA_COLLECTION_ID,
+)
+from app.models.response_models import PostList
+from app.utils.appwrite_client import create_or_update_document, get_document_by_id
+from app.utils.filtering_utils import filter_avoid_ingredients, filter_recent_seen
 
 
 def build_tfidf_and_similarity(df: pd.DataFrame, id_col: str):
     tfidf = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = tfidf.fit_transform(df["combined_text"])
+    tfidf_matrix = tfidf.fit_transform(df["combined_text"].fillna(""))
     cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
     indices = pd.Series(df.index, index=df[id_col]).drop_duplicates()
-
-    return {
-        "tfidf_matrix": tfidf_matrix,
-        "cosine_sim": cosine_sim,
-        "indices": indices,
-    }
+    return {"tfidf_matrix": tfidf_matrix, "cosine_sim": cosine_sim, "indices": indices}
 
 
 class RecommendationEngine:
@@ -47,142 +36,100 @@ class RecommendationEngine:
         tips_df: pd.DataFrame = pd.DataFrame(),
         discussions_df: pd.DataFrame = pd.DataFrame(),
         communities_df: pd.DataFrame = pd.DataFrame(),
+        data_sufficient: bool = False,
     ):
         self.recipes_df = recipes_df
         self.interactions_df = interactions_df
         self.tips_df = tips_df
         self.discussions_df = discussions_df
         self.communities_df = communities_df
+        self.data_sufficient = data_sufficient
 
-        self.similarity_models = {
-            "recipe": {},
-            "tip": {},
-            "discussion": {},
-            "community": {},
-        }
+        self.similarity_models = {k: {} for k in CONTENT_TYPE_MAP}
+        self.sim_matrices = {k: {} for k in CONTENT_TYPE_MAP}
 
-        self.sim_matrices = {
-            "recipe": {},
-            "tip": {},
-            "discussion": {},
-            "community": {},
-        }
+        self._preprocess_content_based()
+        self._preprocess_collaborative_based()
 
-        self.data_sufficient = False
+    def _preprocess_content_based(self):
+        for ctype, config in CONTENT_TYPE_MAP.items():
+            df = getattr(self, config["attr"])
+            if not df.empty:
+                self.similarity_models[ctype] = build_tfidf_and_similarity(
+                    df, config["id_col"]
+                )
 
-    def preprocess_content_based(self):
-        if not self.recipes_df.empty:
-            self.similarity_models["recipe"] = build_tfidf_and_similarity(
-                self.recipes_df, "recipe_id"
-            )
-
-        if not self.tips_df.empty:
-            self.similarity_models["tip"] = build_tfidf_and_similarity(
-                self.tips_df, "post_id"
-            )
-
-        if not self.discussions_df.empty:
-            self.similarity_models["discussion"] = build_tfidf_and_similarity(
-                self.discussions_df, "post_id"
-            )
-
-        if not self.communities_df.empty:
-            self.similarity_models["community"] = build_tfidf_and_similarity(
-                self.communities_df, "community_id"
-            )
-
-    def preprocess_collaborative_based(self):
+    def _preprocess_collaborative_based(self):
         now = datetime.now(timezone.utc)
-        seven_days_ago = now - timedelta(days=7)
-
-        def compute_score(row):
-            if row["type"] == "coldstart":
-                return INTERACTION_WEIGHTS["coldstart"].get(row["value"], 0.0)
-            elif row["type"] == "view":
-                return None  # handled separately
-            else:
-                return INTERACTION_WEIGHTS.get(row["type"], 0.0)
+        recent_cutoff = now - timedelta(days=7)
 
         self.interactions_df["score"] = self.interactions_df.apply(
-            compute_score, axis=1
+            lambda row: INTERACTION_WEIGHTS["coldstart"].get(row["value"], 0.0)
+            if row["type"] == "coldstart"
+            else INTERACTION_WEIGHTS.get(row["type"], 0.0)
+            if row["type"] != "view"
+            else None,
+            axis=1,
         )
 
-        view_scores = self.compute_view_decay_scores(seven_days_ago)
+        view_scores = self._compute_view_decay_scores(recent_cutoff)
+        explicit = self.interactions_df[self.interactions_df["type"] != "view"]
+        self.interactions_df = pd.concat([explicit, view_scores], ignore_index=True)
 
-        non_view_df = self.interactions_df[self.interactions_df["type"] != "view"][
-            ["user_id", "item_id", "item_type", "type", "score", "created_at"]
-        ]
+        for ctype in ["recipe", "discussion", "tip", "community"]:
+            self.sim_matrices[ctype] = self._build_cf_similarity_matrix(ctype)
 
-        self.interactions_df = pd.concat([non_view_df, view_scores], ignore_index=True)
-
-        self.sim_matrices = {}
-        for content_type in ["recipe", "tip", "discussion", "community"]:
-            df = self.interactions_df[self.interactions_df["item_type"] == content_type]
-
-            if df.empty:
-                continue
-
-            user_map = {uid: i for i, uid in enumerate(df["user_id"].unique())}
-            item_map = {iid: i for i, iid in enumerate(df["item_id"].unique())}
-
-            if len(user_map) == 0 or len(item_map) == 0:
-                continue
-
-            df["user_idx"] = df["user_id"].map(user_map)
-            df["item_idx"] = df["item_id"].map(item_map)
-
-            interaction_matrix = csr_matrix(
-                (
-                    df["score"],
-                    (df["user_idx"], df["item_idx"]),
-                ),
-                shape=(len(user_map), len(item_map)),
-            )
-
-            sim_matrix = cosine_similarity(interaction_matrix.T)
-
-            self.sim_matrices[content_type] = {
-                "matrix": sim_matrix,
-                "item_map": item_map,
-                "item_idx_to_id": {v: k for k, v in item_map.items()},
-            }
-
-    def compute_view_decay_scores(self, since: datetime) -> pd.DataFrame:
+    def _compute_view_decay_scores(self, since: datetime) -> pd.DataFrame:
         view_df = self.interactions_df[self.interactions_df["type"] == "view"].explode(
             "timestamps"
         )
         view_df["timestamp"] = pd.to_datetime(view_df["timestamps"], utc=True)
+        recent = view_df[view_df["timestamp"] >= since]
 
-        recent_views = view_df[view_df["timestamp"] >= since]
-
-        view_counts = (
-            recent_views.groupby(["user_id", "item_id", "item_type"])
+        counts = (
+            recent.groupby(["user_id", "item_id", "item_type"])
             .agg(view_count=("timestamp", "count"), created_at=("timestamp", "max"))
             .reset_index()
         )
-
-        view_counts["score"] = view_counts["view_count"].apply(
+        counts["score"] = counts["view_count"].apply(
             lambda c: min(0.2 * np.log1p(c), 0.6)
         )
-        view_counts["type"] = "view"
-
-        return view_counts[
+        counts["type"] = "view"
+        return counts[
             ["user_id", "item_id", "item_type", "type", "score", "created_at"]
         ]
 
-    def preprocess(self):
-        self.preprocess_content_based()
-        self.preprocess_collaborative_based()
+    def _build_cf_similarity_matrix(self, content_type: str):
+        df = self.interactions_df[self.interactions_df["item_type"] == content_type]
+        if df.empty:
+            return {}
+
+        user_map = {uid: i for i, uid in enumerate(df["user_id"].unique())}
+        item_map = {iid: i for i, iid in enumerate(df["item_id"].unique())}
+        if not user_map or not item_map:
+            return {}
+
+        df["user_idx"] = df["user_id"].map(user_map)
+        df["item_idx"] = df["item_id"].map(item_map)
+
+        interaction_matrix = csr_matrix(
+            (df["score"], (df["user_idx"], df["item_idx"])),
+            shape=(len(user_map), len(item_map)),
+        )
+
+        return {
+            "matrix": cosine_similarity(interaction_matrix.T),
+            "item_map": item_map,
+            "item_idx_to_id": {v: k for k, v in item_map.items()},
+        }
 
     def adaptive_weights(self, item_id: str) -> Tuple[float, float]:
         count = self.interactions_df[
             self.interactions_df["item_id"] == str(item_id)
         ].shape[0]
         total = len(self.interactions_df)
-        ratio = count / total if total > 0 else 0
-        cf_weight = min(0.8, ratio + 0.1)
-        cbf_weight = 1.0 - cf_weight
-        return cbf_weight, cf_weight
+        cf_weight = min(0.8, count / total + 0.1 if total else 0)
+        return 1.0 - cf_weight, cf_weight
 
     def get_hybrid_recommendations(
         self,
@@ -193,75 +140,59 @@ class RecommendationEngine:
         top_k=100,
         sample_n=40,
     ) -> pd.DataFrame:
-        if item_id not in self.similarity_models.get(content_type, {}).get(
-            "indices", {}
-        ):
+        model = self.similarity_models.get(content_type)
+        if not model or item_id not in model["indices"]:
             return pd.DataFrame()
 
-        cbf_idx = self.similarity_models[content_type]["indices"][item_id]
-        cbf_scores = self.similarity_models[content_type]["cosine_sim"][cbf_idx]
-        cbf_scores_norm = minmax_scale(cbf_scores)
+        cbf_idx = model["indices"][item_id]
+        cbf_scores = minmax_scale(model["cosine_sim"][cbf_idx])
 
-        if (
-            content_type in self.sim_matrices
-            and item_id in self.sim_matrices[content_type]["item_map"]
-        ):
-            cf_idx = self.sim_matrices[content_type]["item_map"][item_id]
-            cf_scores_partial = self.sim_matrices[content_type]["matrix"][cf_idx]
+        cf_data = self.sim_matrices.get(content_type)
+        if cf_data and item_id in cf_data["item_map"]:
+            cf_idx = cf_data["item_map"][item_id]
+            cf_partial = cf_data["matrix"][cf_idx]
 
-            cf_scores_full = np.zeros_like(cbf_scores)
-            for rid_str, partial_idx in self.sim_matrices[content_type][
-                "item_map"
-            ].items():
-                full_idx = self.similarity_models[content_type]["indices"].get(rid_str)
+            cf_scores = np.zeros_like(cbf_scores)
+            for rid, partial_idx in cf_data["item_map"].items():
+                full_idx = model["indices"].get(rid)
                 if full_idx is not None:
-                    cf_scores_full[full_idx] = cf_scores_partial[partial_idx]
+                    cf_scores[full_idx] = cf_partial[partial_idx]
 
-            cf_scores_norm = minmax_scale(cf_scores_full)
-            hybrid_scores = cbf_weight * cbf_scores_norm + cf_weight * cf_scores_norm
+            cf_scores = minmax_scale(cf_scores)
+            hybrid = cbf_weight * cbf_scores + cf_weight * cf_scores
         else:
-            hybrid_scores = cbf_scores_norm
+            hybrid = cbf_scores
 
         sim_scores = sorted(
-            [(i, score) for i, score in enumerate(hybrid_scores) if i != cbf_idx],
+            [(i, s) for i, s in enumerate(hybrid) if i != cbf_idx],
             key=lambda x: x[1],
             reverse=True,
         )[:top_k]
 
-        sampled_indices = random.sample(sim_scores, min(sample_n, len(sim_scores)))
-        hybrid_indices = [i for i, _ in sampled_indices]
+        selected = random.sample(sim_scores, min(sample_n, len(sim_scores)))
+        indices = [i for i, _ in selected]
 
-        df = (
-            self.communities_df
-            if content_type == "community"
-            else getattr(self, f"{content_type}s_df")
-        )
+        config = CONTENT_TYPE_MAP[content_type]
+        df = getattr(self, config["attr"]).copy()
+        id_col = config["id_col"]
 
-        if content_type == "community" and "name" in df.columns:
-            df = df.rename(columns={"name": "title"})
+        if (
+            content_type == "community"
+            and "name" in df.columns
+            and "title" not in df.columns
+        ):
+            df["title"] = df["name"]
 
-        if "author_id" not in df.columns:
-            df = df.copy()
-            df["author_id"] = ""
+        for col in ["title", "image", "author_id"]:
+            if col not in df.columns:
+                df[col] = ""
 
-        df["author_id"] = df["author_id"].fillna("").astype(str)
-
-        id_col = {"recipe": "recipe_id", "community": "community_id"}.get(
-            content_type, "post_id"
-        )
-
-        return df.iloc[hybrid_indices][[id_col, "title", "image", "author_id"]]
+        return df.iloc[indices][[id_col, "title", "image", "author_id"]]
 
     def get_trending_items(self, content_type: str, n: int = 20) -> pd.DataFrame:
-        df_map = {
-            "recipe": self.recipes_df,
-            "tip": self.tips_df,
-            "discussion": self.discussions_df,
-            "community": self.communities_df,
-        }
-
-        id_col = ID_COLUMN_MAP[content_type]
-        content_df = df_map[content_type]
+        config = CONTENT_TYPE_MAP[content_type]
+        id_col = config["id_col"]
+        content_df = getattr(self, config["attr"])
 
         top_ids = (
             self.interactions_df[
@@ -276,3 +207,78 @@ class RecommendationEngine:
         )
 
         return content_df[content_df[id_col].isin(top_ids)]
+
+    def generate_recommendations(
+        self,
+        user_id: str,
+        content_type: str,
+        prefs: dict,
+        interactions: pd.DataFrame,
+        max_count: int,
+    ) -> PostList:
+        config = CONTENT_TYPE_MAP[content_type]
+        id_col = config["id_col"]
+
+        trending_ids = self.get_trending_items(content_type, n=10)[id_col].tolist()
+        recent_ids = (
+            interactions[interactions["item_type"] == content_type]["item_id"]
+            .dropna()
+            .unique()
+            .tolist()[:10]
+        )
+        seeds = recent_ids + [t for t in trending_ids if t not in recent_ids][:2]
+
+        seed_threshold = 5 if content_type == "community" else 10
+        if len(seeds) < seed_threshold:
+            seeds = self._coldstart_seeds(user_id, content_type, seeds)
+
+        all_recs = [
+            self.get_hybrid_recommendations(
+                sid,
+                content_type,
+                *self.adaptive_weights(sid) if self.data_sufficient else (0.6, 0.4),
+                top_k=100,
+                sample_n=max_count,
+            )
+            for sid in seeds
+        ]
+
+        combined = pd.concat(all_recs).drop_duplicates(subset=id_col)
+        filtered = filter_recent_seen(combined, user_id, id_col)
+
+        if content_type == "recipe":
+            filtered = filter_avoid_ingredients(
+                filtered, prefs.get("avoid_ingredients", [])
+            )
+
+        final = filtered.head(max_count)
+        create_or_update_document(
+            collection_id=RECOMMENDATION_DATA_COLLECTION_ID,
+            document_id=user_id,
+            data={"user_id": user_id, "last_recommendations": final[id_col].tolist()},
+        )
+
+        return PostList(
+            post_ids=final[id_col].tolist(),
+            titles=final["title"].tolist(),
+            images=final["image"].tolist(),
+            author_ids=final["author_id"].tolist(),
+        )
+
+    def _coldstart_seeds(self, user_id: str, content_type: str, seeds: list) -> list:
+        key = {"tip": "tip", "discussion": "discussion", "community": "community"}.get(
+            content_type
+        )
+        try:
+            doc = get_document_by_id(RECOMMENDATION_DATA_COLLECTION_ID, user_id)
+            onboarding = json.loads(doc.get("onboarding_suggestions", "{}"))
+        except Exception:
+            onboarding = {}
+
+        ids = onboarding.get(key, []) if key else []
+        threshold = 5 if content_type == "community" else 10
+
+        if not seeds:
+            return ids[:threshold]
+        top_up = [i for i in ids if i not in seeds][: threshold - len(seeds)]
+        return seeds + top_up

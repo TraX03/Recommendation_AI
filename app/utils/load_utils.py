@@ -3,14 +3,16 @@ import re
 from typing import Tuple
 
 import pandas as pd
+from fastapi import HTTPException
 
 from app.constants import (
     COMMUNITIES_COLLECTION_ID,
     INTERACTIONS_COLLECTION_ID,
     POSTS_COLLECTION_ID,
     RECIPES_COLLECTION_ID,
+    USERS_COLLECTION_ID,
 )
-from app.utils.appwrite_client import fetch_documents
+from app.utils.appwrite_client import fetch_documents, get_document_by_id
 
 
 def clean(text):
@@ -154,3 +156,15 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
     # #         used_mock = True
 
     return df, data_sufficient
+
+
+def get_user_preferences(user_id: str) -> dict:
+    try:
+        user = get_document_by_id(USERS_COLLECTION_ID, user_id)
+        return {
+            "avoid_ingredients": user.get("avoid_ingredients", []),
+            "diet": user.get("diet", []),
+            "region_pref": user.get("region_pref", []),
+        }
+    except Exception:
+        raise HTTPException(status_code=404, detail="User not found")
