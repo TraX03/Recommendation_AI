@@ -21,10 +21,13 @@ def get_existing_view_interaction(user_id: str, item_id: str, interaction_type: 
         collection_id=INTERACTIONS_COLLECTION_ID,
         queries=queries,
     )
-    return documents[0] if documents else None
+
+    return documents["documents"][0] if documents["documents"] else None
 
 
-def log_user_view(user_id: str, item_id: str, source: str = "homeFeed") -> str:
+def log_user_view(
+    user_id: str, item_id: str, source: str = "homeFeed", item_type: str = "recipe"
+) -> str:
     now = datetime.now(timezone.utc)
 
     existing_doc = get_existing_view_interaction(
@@ -38,6 +41,7 @@ def log_user_view(user_id: str, item_id: str, source: str = "homeFeed") -> str:
                 "user_id": user_id,
                 "item_id": item_id,
                 "type": VIEW_TYPE,
+                "item_type": item_type,
                 "source": source,
                 "created_at": now.isoformat(),
                 "timestamps": [now.isoformat()],

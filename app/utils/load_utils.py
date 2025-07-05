@@ -139,7 +139,7 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
                 "item_id": d.get("item_id"),
                 "type": d.get("type"),
                 "item_type": d.get("item_type"),
-                "value": d.get("value"),
+                "score": d.get("score"),
                 "timestamps": d.get("timestamps"),
                 "created_at": d.get("created_at"),
             }

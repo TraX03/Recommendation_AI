@@ -17,7 +17,6 @@ RECOMMENDATION_DATA_COLLECTION_ID = os.environ.get(
 )
 
 INTERACTION_WEIGHTS = {
-    "coldstart": {"like": 1.0, "neutral": 0.5, "dislike": 0.0},
     "like": 1.0,
     "bookmark": 0.5,
     "view": 0.2,

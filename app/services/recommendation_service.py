@@ -64,20 +64,26 @@ class RecommendationEngine:
         recent_cutoff = now - timedelta(days=7)
 
         self.interactions_df["score"] = self.interactions_df.apply(
-            lambda row: INTERACTION_WEIGHTS["coldstart"].get(row["value"], 0.0)
-            if row["type"] == "coldstart"
-            else INTERACTION_WEIGHTS.get(row["type"], 0.0)
-            if row["type"] != "view"
-            else None,
+            self._normalize_score,
             axis=1,
         )
 
         view_scores = self._compute_view_decay_scores(recent_cutoff)
-        explicit = self.interactions_df[self.interactions_df["type"] != "view"]
+        explicit = self.interactions_df[
+            ~self.interactions_df["type"].isin(["view", "follow"])
+        ]
         self.interactions_df = pd.concat([explicit, view_scores], ignore_index=True)
 
         for ctype in ["recipe", "discussion", "tip", "community"]:
             self.sim_matrices[ctype] = self._build_cf_similarity_matrix(ctype)
+
+    def _normalize_score(self, row) -> float:
+        if row["type"] == "rating" and pd.notnull(row.get("score")):
+            return float(row["score"]) / 10.0
+        elif pd.notnull(row.get("score")):
+            return float(row["score"])
+        else:
+            return INTERACTION_WEIGHTS.get(row["type"], 0.0)
 
     def _compute_view_decay_scores(self, since: datetime) -> pd.DataFrame:
         view_df = self.interactions_df[self.interactions_df["type"] == "view"].explode(
@@ -103,6 +109,8 @@ class RecommendationEngine:
         df = self.interactions_df[self.interactions_df["item_type"] == content_type]
         if df.empty:
             return {}
+
+        df = df.copy()
 
         user_map = {uid: i for i, uid in enumerate(df["user_id"].unique())}
         item_map = {iid: i for i, iid in enumerate(df["item_id"].unique())}
