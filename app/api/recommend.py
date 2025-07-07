@@ -3,7 +3,7 @@ from fastapi import APIRouter
 
 from app import dependencies
 from app.models.response_models import RecommendationResponse
-from app.services.recommendation_service import RecommendationEngine
+from app.services.recommendation_service import HybridRecommender
 from app.utils.load_utils import get_user_preferences
 
 recommend_router = APIRouter()
@@ -11,7 +11,7 @@ recommend_router = APIRouter()
 
 @recommend_router.post("/homeFeed/{user_id}", response_model=RecommendationResponse)
 def recommend_for_home(user_id: str) -> RecommendationResponse:
-    engine: RecommendationEngine = dependencies.engine
+    engine: HybridRecommender = dependencies.engine
     prefs = get_user_preferences(user_id)
 
     interactions = engine.interactions_df.query("user_id == @user_id").copy()

@@ -22,6 +22,33 @@ INTERACTION_WEIGHTS = {
     "view": 0.2,
 }
 
+BLOCKED_KEYWORDS_BY_DIET = {
+    "vegan": [
+        "meat",
+        "beef",
+        "chicken",
+        "pork",
+        "lamb",
+        "goat",
+        "seafood",
+        "fish",
+        "egg",
+        "cheese",
+        "milk",
+    ],
+    "vegetarian": [
+        "meat",
+        "beef",
+        "chicken",
+        "pork",
+        "lamb",
+        "goat",
+        "seafood",
+        "fish",
+    ],
+    "pescatarian": ["meat", "beef", "chicken", "pork", "lamb", "goat"],
+}
+
 CONTENT_TYPE_MAP = {
     "recipe": {
         "id_col": "recipe_id",

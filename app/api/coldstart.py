@@ -8,7 +8,7 @@ from app import dependencies
 from app.constants import CONTENT_TYPE_MAP, RECOMMENDATION_DATA_COLLECTION_ID
 from app.models.response_models import PostList
 from app.services.coldstart_service import generate_coldstart
-from app.services.recommendation_service import RecommendationEngine
+from app.services.recommendation_service import HybridRecommender
 from app.utils.appwrite_client import create_or_update_document
 from app.utils.load_utils import get_user_preferences
 
@@ -26,7 +26,7 @@ def to_post_list(df: pd.DataFrame, id_col: str = "post_id") -> PostList:
 
 @coldstart_router.post("/coldstart/{user_id}", response_model=PostList)
 def cold_start_from_user(user_id: str) -> PostList:
-    engine: RecommendationEngine = dependencies.engine
+    engine: HybridRecommender = dependencies.engine
     prefs = get_user_preferences(user_id)
     tfidf = TfidfVectorizer(stop_words="english")
 

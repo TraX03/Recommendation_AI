@@ -1,6 +1,5 @@
 import json
 import re
-from typing import Tuple
 
 import pandas as pd
 from fastapi import HTTPException
@@ -37,7 +36,9 @@ def fetch_recipe_data() -> pd.DataFrame:
         title = doc.get("title")
         tags = doc.get("tags", [])
         mealtime = doc.get("mealtime", [])
-        category = doc.get("category", "")
+        category = doc.get("category", [])
+        if not isinstance(category, list):
+            category = [category]
         cuisine = doc.get("area", "")
         description = doc.get("description", "") or ""
 
@@ -54,8 +55,8 @@ def fetch_recipe_data() -> pd.DataFrame:
                 + ingredients
                 + tags
                 + mealtime
-                + [cuisine]
                 + category
+                + [cuisine]
                 + [description]
                 + instructions,
             )
@@ -129,9 +130,9 @@ def fetch_community_data() -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
+def fetch_interaction_data() -> pd.DataFrame:
     documents = fetch_documents(INTERACTIONS_COLLECTION_ID)
-    df = pd.DataFrame(
+    return pd.DataFrame(
         [
             {
                 "interaction_id": d["$id"],
@@ -146,16 +147,6 @@ def fetch_interaction_data() -> Tuple[pd.DataFrame, bool]:
             for d in documents
         ]
     )
-
-    data_sufficient = len(df) >= 1000
-    # if len(df) < 1000:
-    # #     mock_path = "mockData/user_interactions.xlsx"
-    # #     if os.path.exists(mock_path):
-    # #         mock_df = pd.read_excel(mock_path)
-    # #         df = pd.concat([df, mock_df], ignore_index=True)
-    # #         used_mock = True
-
-    return df, data_sufficient
 
 
 def get_user_preferences(user_id: str) -> dict:
