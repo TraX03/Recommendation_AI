@@ -32,7 +32,7 @@ def cold_start_from_user(user_id: str) -> PostList:
 
     recipe_df = generate_coldstart(
         user_prefs=prefs,
-        df=engine.recipes_df,
+        df=engine.data_map["recipe"],
         tfidf_vectorizer=tfidf,
         id_column="recipe_id",
         avoid_filter=True,
@@ -41,7 +41,7 @@ def cold_start_from_user(user_id: str) -> PostList:
     )
 
     post_sources = {
-        ctype: (config["id_col"], getattr(engine, config["attr"]))
+        ctype: (config["id_col"], engine.data_map[ctype])
         for ctype, config in CONTENT_TYPE_MAP.items()
         if ctype != "recipe"
     }
