@@ -7,6 +7,7 @@ from app.api.coldstart import coldstart_router
 from app.api.log_view import log_view_router
 from app.api.recommend import recommend_router
 from app.services.recommendation_service import HybridRecommender
+from app.utils.embedding_utils import load_or_embed
 from app.utils.load_utils import (
     fetch_community_data,
     fetch_interaction_data,
@@ -17,10 +18,12 @@ from app.utils.load_utils import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    recipes_df = fetch_recipe_data()
-    interactions_df = fetch_interaction_data()
+    recipes_df = load_or_embed("recipes", fetch_recipe_data)
     tips_df, discussion_df = fetch_post_data()
-    community_df = fetch_community_data()
+    tips_df = load_or_embed("tips", lambda: tips_df)
+    discussion_df = load_or_embed("discussions", lambda: discussion_df)
+    community_df = load_or_embed("communities", fetch_community_data)
+    interactions_df = fetch_interaction_data()
 
     engine = HybridRecommender(
         recipes_df=recipes_df,
@@ -42,3 +45,8 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(recommend_router, prefix="/recommendation")
 app.include_router(coldstart_router, prefix="/onboarding")
 app.include_router(log_view_router, prefix="/interactions")
+
+
+@app.get("/")
+def root():
+    return {"message": "Recommendation API is running."}

@@ -2,11 +2,12 @@ import json
 import random
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import minmax_scale
@@ -23,6 +24,12 @@ from app.utils.filtering_utils import (
     filter_diet,
     filter_recent_seen,
 )
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
+    return list(model.encode(texts, batch_size=batch_size, convert_to_numpy=True))
 
 
 def build_tfidf_and_similarity(df: pd.DataFrame, id_col: str):
@@ -55,20 +62,32 @@ class HybridRecommender:
             "community": communities_df,
         }
         self.interactions_df = interactions_df
-
         self.similarity_models = {}
         self.sim_matrices = {}
-
         self._prepare_content_based_models()
         self._prepare_collaborative_models()
 
     def _prepare_content_based_models(self):
         for ctype, config in CONTENT_TYPE_MAP.items():
             df = self.data_map.get(ctype)
-            if not df.empty:
-                self.similarity_models[ctype] = build_tfidf_and_similarity(
-                    df, config["id_col"]
-                )
+            if df.empty:
+                continue
+
+            tfidf_model = build_tfidf_and_similarity(df, config["id_col"])
+
+            if "embedding" in df.columns and df["embedding"].notna().any():
+                embedding_sim = cosine_similarity(np.stack(df["embedding"].dropna()))
+                indices = pd.Series(
+                    df.index, index=df[config["id_col"]]
+                ).drop_duplicates()
+                self.similarity_models[ctype] = {
+                    "cosine_sim": embedding_sim,
+                    "indices": indices,
+                    "vectorizer": tfidf_model["vectorizer"],
+                    "tfidf_matrix": tfidf_model["tfidf_matrix"],
+                }
+            else:
+                self.similarity_models[ctype] = tfidf_model
 
     def _prepare_collaborative_models(self):
         self.interactions_df["score"] = self.interactions_df.apply(
@@ -139,12 +158,35 @@ class HybridRecommender:
             "item_idx_to_id": {v: k for k, v in item_map.items()},
         }
 
-    def _build_user_profile_vector(self, prefs: dict, model) -> np.ndarray:
+    def _build_user_profile_vector(
+        self, user_id: str, content_model, prefs: dict
+    ) -> np.ndarray:
+        user_interactions = self.interactions_df.query("user_id == @user_id")
+
+        strong = user_interactions[
+            (user_interactions["type"].isin(["bookmark", "like"]))
+            | (user_interactions.get("rating", 0) >= 7.0)
+        ]
+
         keywords = []
-        for key in ["diet", "region_pref", "tags", "interests"]:
+        if not strong.empty:
+            item_ids = strong["item_id"].unique()
+            id_col = CONTENT_TYPE_MAP["recipe"]["id_col"]
+            matched = self.data_map["recipe"][
+                self.data_map["recipe"][id_col].isin(item_ids)
+            ]
+
+            for _, row in matched.iterrows():
+                keywords += (
+                    row.get("tags", [])
+                    + row.get("title", "").lower().split()
+                    + row.get("description", "").lower().split()
+                )
+
+        for key in ["diet", "region_pref"]:
             values = prefs.get(key)
             if isinstance(values, list):
-                keywords.extend(values)
+                keywords += values
             elif isinstance(values, str):
                 keywords.append(values)
 
@@ -154,15 +196,16 @@ class HybridRecommender:
             if isinstance(k, str) and k.strip()
         ]
 
-        if not clean_keywords or "vectorizer" not in model:
-            return np.zeros(model["tfidf_matrix"].shape[0])
+        if not clean_keywords or content_model.get("vectorizer") is None:
+            return np.zeros(content_model["tfidf_matrix"].shape[0])
 
         profile_text = " ".join(clean_keywords)
-        user_vector = model["vectorizer"].transform([profile_text])
-        return cosine_similarity(user_vector, model["tfidf_matrix"]).flatten()
+        user_vector = content_model["vectorizer"].transform([profile_text])
+        return cosine_similarity(user_vector, content_model["tfidf_matrix"]).flatten()
 
     def get_hybrid_recommendations(
         self,
+        user_id: str,
         item_id: str,
         content_type: str,
         user_prefs: Optional[dict] = None,
@@ -193,7 +236,9 @@ class HybridRecommender:
             cf_scores = minmax_scale(cf_scores)
 
         # User profile CBF scoring
-        user_scores = self._build_user_profile_vector(user_prefs or {}, model)
+        user_scores = minmax_scale(
+            self._build_user_profile_vector(user_id, model, user_prefs or {})
+        )
         user_scores = minmax_scale(user_scores)
 
         hybrid_scores = (
@@ -276,9 +321,10 @@ class HybridRecommender:
         recs = pd.concat(
             [
                 self.get_hybrid_recommendations(
-                    sid,
-                    content_type,
-                    prefs,
+                    user_id=user_id,
+                    item_id=sid,
+                    content_type=content_type,
+                    user_prefs=prefs,
                     item_cbf_weight=0.3,
                     user_cbf_weight=0.4,
                     cf_weight=0.3,

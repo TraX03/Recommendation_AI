@@ -38,4 +38,4 @@ dist/
 ~$*.xlsx
 
 # Ignore app data folder
-app/data/
+app/cache/
