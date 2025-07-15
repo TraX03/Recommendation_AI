@@ -4,48 +4,74 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
+from sentence_transformers import SentenceTransformer
 
-from app.services.recommendation_service import get_local_embeddings
+CACHE_DIR = "app/cache"
+MAX_AGE_DAYS = 7
+
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def load_or_embed(
     name: str,
     fetch_func: Callable[[], pd.DataFrame],
-    cache_dir: str = "app/cache",
-    max_age_days: int = 7,
-    batch_size: int = 100,
+    text_column: str = "combined_text",
 ) -> pd.DataFrame:
-    os.makedirs(cache_dir, exist_ok=True)
-    path = os.path.join(cache_dir, f"{name}_embed.parquet")
-
-    def embed_batches(texts: List[str]) -> List[Optional[np.ndarray]]:
-        embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            try:
-                embeddings.extend(get_local_embeddings(batch))
-            except Exception as e:
-                print(f"[Embedding] Failed on batch {i // batch_size + 1}: {e}")
-                embeddings.extend([None] * len(batch))
-        return embeddings
+    path = os.path.join(CACHE_DIR, f"{name}_embed.parquet")
+    now = datetime.now()
 
     if os.path.exists(path):
         df = pd.read_parquet(path)
-        if datetime.now() - datetime.fromtimestamp(os.path.getmtime(path)) < timedelta(
-            days=max_age_days
-        ):
-            if df["embedding"].notna().all():
-                return df
-            print(f"[Embedding] Retrying missing embeddings for {name}...")
-            mask = df["embedding"].isna()
-            df.loc[mask, "embedding"] = embed_batches(
-                df.loc[mask, "combined_text"].fillna("").tolist()
-            )
-            df.to_parquet(path)
-            return df
+    else:
+        df = fetch_func().copy()
+        df["embedding"] = None
+        df["embedding_ts"] = None
 
-    df = fetch_func().copy()
-    print(f"[Embedding] Generating embeddings for {name} in batches...")
-    df["embedding"] = embed_batches(df["combined_text"].fillna("").tolist())
-    df.to_parquet(path)
+    if text_column not in df.columns:
+        raise ValueError(f"DataFrame must include '{text_column}' column")
+
+    df["embedding_ts"] = pd.to_datetime(df["embedding_ts"], errors="coerce")
+    age_cutoff = now - timedelta(days=MAX_AGE_DAYS)
+
+    needs_embedding = df["embedding"].isna() | df["embedding_ts"].lt(age_cutoff)
+
+    if needs_embedding.any():
+        print(
+            f"[Embedding] Re-embedding {needs_embedding.sum()} stale/missing rows for {name}..."
+        )
+
+        to_embed_mask = needs_embedding & df[text_column].notna()
+        to_embed = df.loc[to_embed_mask, text_column].fillna("").tolist()
+        embeddings = _embed_batches(to_embed)
+
+        df.loc[to_embed_mask, "embedding"] = pd.Series(
+            embeddings, index=df[to_embed_mask].index, dtype="object"
+        )
+        df.loc[to_embed_mask, "embedding_ts"] = now
+
+        df.to_parquet(path, index=False)
+
     return df
+
+
+def _get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
+    return list(
+        embedding_model.encode(texts, batch_size=batch_size, convert_to_numpy=True)
+    )
+
+
+def _embed_batches(
+    texts: List[str], batch_size: int = 100
+) -> List[Optional[np.ndarray]]:
+    embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        try:
+            batch_embeddings = _get_local_embeddings(batch)
+            embeddings.extend(batch_embeddings)
+        except Exception as e:
+            print(f"[Embedding] Failed on batch {i // batch_size + 1}: {e}")
+            embeddings.extend([None] * len(batch))
+    return embeddings

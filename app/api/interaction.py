@@ -3,13 +3,15 @@ import traceback
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from app.services.log_view_service import log_user_view
+from app.services.interaction_service import InteractionService
 
-log_view_router = APIRouter()
+interaction_router = APIRouter()
 
 
-@log_view_router.post("/logView")
+@interaction_router.post("/logView")
 async def log_view(request: Request):
+    interaction_service = InteractionService()
+
     data = await request.json()
     user_id = data.get("user_id")
     item_id = data.get("item_id")
@@ -20,10 +22,13 @@ async def log_view(request: Request):
         raise HTTPException(status_code=400, detail="Missing user_id or item_id")
 
     try:
-        result = log_user_view(
-            user_id=user_id, item_id=item_id, source=source, item_type=item_type
+        result = interaction_service.log_interaction(
+            user_id=user_id,
+            item_id=item_id,
+            item_type=item_type,
+            source=source,
         )
-        return {"status": "logged" if result else "duplicate_ignored"}
+        return {"status": result}
     except Exception as e:
         print("Exception in log_view:", repr(e))
         traceback.print_exc()

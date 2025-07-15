@@ -1,3 +1,3 @@
-from app.services.recommendation_service import HybridRecommender
+from app.engines.recommender import Recommender
 
-engine: HybridRecommender = None
+engine: Recommender = None

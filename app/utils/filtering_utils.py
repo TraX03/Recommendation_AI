@@ -6,17 +6,22 @@ from app.constants import BLOCKED_KEYWORDS_BY_DIET, RECOMMENDATION_DATA_COLLECTI
 from app.utils.appwrite_client import get_document_by_id
 
 
-def filter_recent_seen(df: pd.DataFrame, user_id: str, id_col: str) -> pd.DataFrame:
+def filter_recent_seen(
+    df: pd.DataFrame,
+    user_id: str,
+    id_col: str,
+    content_type: str,
+    max_recent: int = 50,
+) -> pd.DataFrame:
+    key = f"last_recommendations_{content_type}"
     try:
-        doc = get_document_by_id(
-            collection_id=RECOMMENDATION_DATA_COLLECTION_ID,
-            document_id=user_id,
-        )
-        recent_ids = {str(rid) for rid in doc.get("last_recommendations", [])[:60]}
+        doc = get_document_by_id(RECOMMENDATION_DATA_COLLECTION_ID, user_id)
+        recent_ids = set(str(rid) for rid in doc.get(key, [])[:max_recent])
     except Exception:
         recent_ids = set()
 
-    return df[~df[id_col].astype(str).isin(recent_ids)]
+    seen_mask = df[id_col].astype(str).isin(recent_ids)
+    return df[~seen_mask]
 
 
 def filter_avoid_ingredients(

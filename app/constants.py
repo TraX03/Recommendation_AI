@@ -12,6 +12,8 @@ RECIPES_COLLECTION_ID = os.environ.get("APPWRITE_RECIPES_COLLECTION_ID")
 INTERACTIONS_COLLECTION_ID = os.environ.get("APPWRITE_INTERACTIONS_COLLECTION_ID")
 POSTS_COLLECTION_ID = os.environ.get("APPWRITE_POSTS_COLLECTION_ID")
 COMMUNITIES_COLLECTION_ID = os.environ.get("APPWRITE_COMMUNITIES_COLLECTION_ID")
+LISTS_COLLECTION_ID = os.environ.get("APPWRITE_LISTS_COLLECTION_ID")
+MEALPLAN_COLLECTION_ID = os.environ.get("APPWRITE_MEALPLAN_COLLECTION_ID")
 RECOMMENDATION_DATA_COLLECTION_ID = os.environ.get(
     "APPWRITE_RECOMMENDATION_DATA_COLLECTION_ID"
 )
@@ -47,6 +49,23 @@ BLOCKED_KEYWORDS_BY_DIET = {
         "fish",
     ],
     "pescatarian": ["meat", "beef", "chicken", "pork", "lamb", "goat"],
+}
+
+TAG_CATEGORIES = {
+    "meat": ["beef", "chicken", "pork", "lamb", "goat", "meat", "seafood"],
+    "vege": ["vegetable", "veggie", "vegan", "tofu", "plant-based"],
+    "soup": ["soup", "broth", "stew", "clear soup"],
+    "side": [
+        "side",
+        "dessert",
+        "side dish",
+        "appetizer",
+        "starter",
+        "snack",
+        "salad",
+        "sauce",
+    ],
+    "staples": ["rice", "pasta", "noodles", "bread", "burger", "sandwich"],
 }
 
 CONTENT_TYPE_MAP = {
