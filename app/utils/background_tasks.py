@@ -119,5 +119,5 @@ async def apply_soft_feedback_loop():
 
 
 async def start_background_tasks():
-    asyncio.create_task(refresh_engine_loop())
+    # asyncio.create_task(refresh_engine_loop())
     asyncio.create_task(apply_soft_feedback_loop())

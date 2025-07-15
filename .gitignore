@@ -34,8 +34,7 @@ build/
 dist/
 *.spec
 
-# Ignore Excel cache if any
-~$*.xlsx
-
 # Ignore app data folder
 app/cache/
+
+.expo

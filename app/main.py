@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import pandas as pd
 from fastapi import FastAPI
 
 from app import dependencies
@@ -9,25 +10,17 @@ from app.api.interaction import interaction_router
 from app.api.recommendation import recommend_router
 from app.engines.recommender import Recommender
 from app.utils.background_tasks import start_background_tasks
-from app.utils.data_loader import (
-    fetch_community_data,
-    fetch_interaction_data,
-    fetch_inventory_data,
-    fetch_post_data,
-    fetch_recipe_data,
-)
-from app.utils.embedding_utils import load_or_embed
+from app.utils.data_loader import fetch_interaction_data
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[Startup] Initializing engine...")
-    recipes_df = load_or_embed("recipes", fetch_recipe_data)
-    tips_df, discussion_df = fetch_post_data()
-    tips_df = load_or_embed("tips", lambda: tips_df)
-    discussion_df = load_or_embed("discussions", lambda: discussion_df)
-    community_df = load_or_embed("communities", fetch_community_data)
-    inventory_df = load_or_embed("inventory", fetch_inventory_data, text_column="name")
+    recipes_df = pd.read_pickle("precomputed/recipes.pkl")
+    tips_df = pd.read_pickle("precomputed/tips.pkl")
+    discussion_df = pd.read_pickle("precomputed/discussions.pkl")
+    community_df = pd.read_pickle("precomputed/communities.pkl")
+    inventory_df = pd.read_pickle("precomputed/inventory.pkl")
     interactions_df = fetch_interaction_data()
 
     engine = Recommender(
