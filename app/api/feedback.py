@@ -10,6 +10,7 @@ feedback_router = APIRouter()
 @feedback_router.post("/homeFeed/{user_id}")
 def log_home_session_feedback(user_id: str) -> dict:
     engine = dependencies.engine
+    engine.refresh_models()
     prefs = get_user_preferences(user_id)
 
     result = engine.log_session_feedback(user_id, prefs)
@@ -22,6 +23,7 @@ def log_inventory_feedback(
     payload: FeedbackRequest,
 ) -> dict:
     engine = dependencies.engine
+    engine.refresh_models()
 
     session_data = fetch_session_data(
         user_id=user_id,

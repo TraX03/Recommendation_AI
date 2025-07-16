@@ -1,7 +1,7 @@
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 from appwrite.query import Query
@@ -22,6 +22,7 @@ from app.utils.appwrite_client import (
     list_documents,
     update_document,
 )
+from app.utils.embedding_utils import load_or_embed
 
 
 def clean(text):
@@ -31,6 +32,21 @@ def clean(text):
     text = re.sub(r"[^\w\s]", "", text)
     text = re.sub(r"\s+", " ", text)
     return text
+
+
+def load_data_map() -> Dict[str, pd.DataFrame]:
+    tips_df, discussion_df = fetch_post_data()
+
+    return {
+        "recipe": load_or_embed("recipes", fetch_recipe_data),
+        "tip": load_or_embed("tips", lambda: tips_df),
+        "discussion": load_or_embed("discussions", lambda: discussion_df),
+        "community": load_or_embed("communities", fetch_community_data),
+        "inventory": load_or_embed(
+            "inventory", fetch_inventory_data, text_column="name"
+        ),
+        "interaction": fetch_interaction_data(),
+    }
 
 
 def fetch_recipe_data() -> pd.DataFrame:

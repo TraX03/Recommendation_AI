@@ -569,10 +569,10 @@ class HybridRecommendationService:
         near_expiry_cutoff: datetime,
     ) -> pd.DataFrame:
         if inventory_action == "boost_inventory_match":
+            names = inventory_df["name"].dropna().unique().tolist()
+            name_embeddings = embedding_model.encode(names, convert_to_numpy=True)
             inventory_embeddings = {
-                row["name"]: np.array(row["embedding"])
-                for _, row in inventory_df.iterrows()
-                if isinstance(row.get("embedding"), (list, np.ndarray))
+                name: vec for name, vec in zip(names, name_embeddings)
             }
 
             def semantic_inventory_match_score(ingredients):

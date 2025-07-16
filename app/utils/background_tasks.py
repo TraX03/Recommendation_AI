@@ -2,50 +2,12 @@ import asyncio
 import json
 from datetime import datetime
 
-from app import dependencies
 from app.agents.inventory_agent import update_inventory_feedback
 from app.constants import MEALPLAN_COLLECTION_ID
-from app.engines.recommender import Recommender
 from app.utils.appwrite_client import update_document
 from app.utils.data_loader import (
-    fetch_community_data,
-    fetch_interaction_data,
-    fetch_inventory_data,
     fetch_mealplan_data,
-    fetch_post_data,
-    fetch_recipe_data,
 )
-from app.utils.embedding_utils import load_or_embed
-
-
-async def rebuild_engine() -> Recommender:
-    print("[Engine Refresh] Rebuilding engine...")
-    recipes_df = load_or_embed("recipes", fetch_recipe_data)
-    tips_df, discussion_df = fetch_post_data()
-    tips_df = load_or_embed("tips", lambda: tips_df)
-    discussion_df = load_or_embed("discussions", lambda: discussion_df)
-    community_df = load_or_embed("communities", fetch_community_data)
-    inventory_df = load_or_embed("inventory", fetch_inventory_data, text_column="name")
-    interactions_df = fetch_interaction_data()
-
-    engine = Recommender(
-        recipes_df=recipes_df,
-        interactions_df=interactions_df,
-        tips_df=tips_df,
-        discussions_df=discussion_df,
-        communities_df=community_df,
-        inventory_df=inventory_df,
-    )
-
-    print("[Engine Refresh] Done.")
-    return engine
-
-
-async def refresh_engine_loop():
-    while True:
-        new_engine = await rebuild_engine()
-        dependencies.engine = new_engine
-        await asyncio.sleep(60 * 30)
 
 
 async def apply_soft_feedback():
@@ -115,9 +77,8 @@ async def apply_soft_feedback():
 async def apply_soft_feedback_loop():
     while True:
         await apply_soft_feedback()
-        await asyncio.sleep(60 * 10)
+        await asyncio.sleep(60 * 60)
 
 
 async def start_background_tasks():
-    # asyncio.create_task(refresh_engine_loop())
     asyncio.create_task(apply_soft_feedback_loop())

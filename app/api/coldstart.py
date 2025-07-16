@@ -23,8 +23,9 @@ def to_post_list(df: pd.DataFrame, id_col: str = "post_id") -> PostList:
 
 @coldstart_router.post("/coldstart/{user_id}", response_model=PostList)
 def cold_start_from_user(user_id: str) -> PostList:
-    prefs = get_user_preferences(user_id)
     engine = dependencies.engine
+    engine.refresh_models()
+    prefs = get_user_preferences(user_id)
     result = engine.cold_start(user_prefs=prefs)
 
     recipe_df = result["recipe_df"]
