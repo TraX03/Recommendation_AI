@@ -4,6 +4,7 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
+from sentence_transformers import SentenceTransformer
 
 CACHE_DIR = "app/cache"
 MAX_AGE_DAYS = 7
@@ -11,14 +12,30 @@ MAX_AGE_DAYS = 7
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 try:
-    # NOTE: This block will be skipped on Render free tier due to memory/storage limits.
-    # If sentence-transformers is unavailable (not in requirements), embedding will be disabled.
     from sentence_transformers import SentenceTransformer
-
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 except ImportError:
-    embedding_model = None
-    print("[NOTE] sentence-transformers not found. Embedding is disabled.")
+    SentenceTransformer = None
+
+_embedding_model = None
+
+
+def get_embedding_model():
+    global _embedding_model
+
+    if SentenceTransformer is None:
+        # NOTE: Embedding is disabled (likely due to missing package or platform limits, e.g., Render Free tier).
+        print("[Embedding] SentenceTransformer is unavailable. Embedding is disabled.")
+        return None
+
+    if _embedding_model is None:
+        try:
+            print("[Embedding] Loading SentenceTransformer model...")
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception as e:
+            print("[Embedding Error] Failed to load model:", e)
+            return None
+
+    return _embedding_model
 
 
 def load_or_embed(
@@ -44,7 +61,8 @@ def load_or_embed(
 
     needs_embedding = df["embedding"].isna() | df["embedding_ts"].lt(age_cutoff)
 
-    if embedding_model is None:
+    model = get_embedding_model()
+    if model is None:
         print("[Embedding] Skipping embedding step because model is not available.")
         return df
 
@@ -68,11 +86,10 @@ def load_or_embed(
 
 
 def _get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
-    if embedding_model is None:
+    model = get_embedding_model()
+    if model is None:
         raise RuntimeError("Embedding model is not available.")
-    return list(
-        embedding_model.encode(texts, batch_size=batch_size, convert_to_numpy=True)
-    )
+    return list(model.encode(texts, batch_size=batch_size, convert_to_numpy=True))
 
 
 def _embed_batches(

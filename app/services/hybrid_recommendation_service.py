@@ -18,7 +18,7 @@ from app.constants import (
 from app.models.schemas import PostList
 from app.services.content_based_service import ContentBasedService
 from app.utils.appwrite_client import create_or_update_document, get_document_by_id
-from app.utils.embedding_utils import embedding_model
+from app.utils.embedding_utils import get_embedding_model
 from app.utils.filtering_utils import (
     filter_avoid_ingredients,
     filter_diet,
@@ -29,13 +29,8 @@ from app.utils.tag_utils import get_inferred_tags
 
 
 class HybridRecommendationService:
-    def __init__(
-        self,
-        content_based_service: ContentBasedService,
-        embedding_model=embedding_model,
-    ):
+    def __init__(self, content_based_service: ContentBasedService):
         self.content_based_service = content_based_service
-        self.embedding_model = embedding_model
         self.last_used_strategies = {}
 
     def get_last_strategy(self, user_id: str) -> Optional[str]:
@@ -486,15 +481,12 @@ class HybridRecommendationService:
 
         query = " ".join(keywords)
 
-        if (
-            self.embedding_model
-            and self.content_based_service
-            and "embedding" in candidates.columns
-        ):
+        model = get_embedding_model()
+        if model and self.content_based_service and "embedding" in candidates.columns:
             filtered = candidates[candidates["embedding"].notnull()].copy()
             if not filtered.empty:
                 try:
-                    query_embedding = self.embedding_model.encode(query)
+                    query_embedding = model.encode(query)
                     embeddings = np.stack(filtered["embedding"].values)
                     similarities = cosine_similarity([query_embedding], embeddings)[0]
 
@@ -633,27 +625,21 @@ class HybridRecommendationService:
                 ):
                     return 0.0
 
-                if self.embedding_model:
-                    try:
-                        name_embeddings = self.embedding_model.encode(
-                            names, convert_to_numpy=True
-                        )
-                        inventory_embeddings = dict(zip(names, name_embeddings))
+                model = get_embedding_model()
+                if model:
+                    name_embeddings = model.encode(names, convert_to_numpy=True)
+                    inventory_embeddings = dict(zip(names, name_embeddings))
 
-                        ingredient_vecs = self.embedding_model.encode(
-                            ingredients, convert_to_numpy=True
-                        )
-                        return np.mean(
-                            [
-                                max(
-                                    cosine_similarity([ing_vec], [inv_vec])[0][0]
-                                    for inv_vec in inventory_embeddings.values()
-                                )
-                                for ing_vec in ingredient_vecs
-                            ]
-                        )
-                    except Exception as e:
-                        print("[Embedding Error] Falling back to TF-IDF:", e)
+                    ingredient_vecs = model.encode(ingredients, convert_to_numpy=True)
+                    return np.mean(
+                        [
+                            max(
+                                cosine_similarity([ing_vec], [inv_vec])[0][0]
+                                for inv_vec in inventory_embeddings.values()
+                            )
+                            for ing_vec in ingredient_vecs
+                        ]
+                    )
 
                 corpus_df = pd.DataFrame({"combined_text": names}).reset_index()
                 tfidf_model = self.content_based_service.build_tfidf_model(
