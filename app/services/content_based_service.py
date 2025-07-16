@@ -17,7 +17,7 @@ class ContentBasedService:
         }
 
     def _build_similarity_model(self, df: pd.DataFrame, id_col: str) -> Dict:
-        tfidf_model = self._build_tfidf_model(df, id_col)
+        tfidf_model = self.build_tfidf_model(df, id_col)
         embedding_model = self._build_embedding_similarity(df, id_col)
 
         if embedding_model:
@@ -30,7 +30,7 @@ class ContentBasedService:
         else:
             return tfidf_model
 
-    def _build_tfidf_model(self, df: pd.DataFrame, id_col: str) -> Dict:
+    def build_tfidf_model(self, df: pd.DataFrame, id_col: str) -> Dict:
         tfidf = TfidfVectorizer(stop_words="english")
         tfidf_matrix = tfidf.fit_transform(df["combined_text"].fillna(""))
         cosine_sim = cosine_similarity(tfidf_matrix)

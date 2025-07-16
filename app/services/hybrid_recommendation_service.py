@@ -1,7 +1,7 @@
 import json
 import random
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ from app.constants import (
     TAG_CATEGORIES,
 )
 from app.models.schemas import PostList
+from app.services.content_based_service import ContentBasedService
 from app.utils.appwrite_client import create_or_update_document, get_document_by_id
 from app.utils.embedding_utils import embedding_model
 from app.utils.filtering_utils import (
@@ -28,8 +29,13 @@ from app.utils.tag_utils import get_inferred_tags
 
 
 class HybridRecommendationService:
-    def __init__(self, build_user_profile_vector_fn: Callable):
-        self.build_user_profile_vector = build_user_profile_vector_fn
+    def __init__(
+        self,
+        content_based_service: ContentBasedService,
+        embedding_model=embedding_model,
+    ):
+        self.content_based_service = content_based_service
+        self.embedding_model = embedding_model
         self.last_used_strategies = {}
 
     def get_last_strategy(self, user_id: str) -> Optional[str]:
@@ -47,7 +53,6 @@ class HybridRecommendationService:
         max_count: int,
     ) -> PostList:
         id_col = CONTENT_TYPE_MAP[content_type]["id_col"]
-
         cf_matrix = cf_models.get(content_type)
         sim_model = sim_models.get(content_type)
 
@@ -145,7 +150,7 @@ class HybridRecommendationService:
         target_recipe_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         available_ingredients = inventory_df["name"].dropna().unique().tolist()
-        near_expiry_cutoff = datetime.now() + timedelta(days=3)
+        near_expiry_cutoff = datetime.now().astimezone() + timedelta(days=3)
 
         ingredient_expiry_map = {}
         for _, row in inventory_df.iterrows():
@@ -235,7 +240,6 @@ class HybridRecommendationService:
             inventory_action=inventory_action,
             inventory_df=inventory_df,
             ingredient_expiry_map=ingredient_expiry_map,
-            embedding_model=embedding_model,
             near_expiry_cutoff=near_expiry_cutoff,
         )
 
@@ -384,7 +388,7 @@ class HybridRecommendationService:
 
         # User profile CBF scoring
         user_scores = minmax_scale(
-            self.build_user_profile_vector(
+            self.content_based_service.build_user_profile_vector(
                 user_interactions=user_interactions,
                 data_map={content_type: content_df},
                 prefs=prefs,
@@ -473,34 +477,80 @@ class HybridRecommendationService:
         self, keywords: List[str], count: int, candidates: pd.DataFrame
     ) -> List[Dict]:
         if not keywords:
-            if "score" in candidates.columns:
-                sorted_candidates = candidates.sort_values(by="score", ascending=False)
-            else:
-                sorted_candidates = candidates.sample(frac=1)
+            sorted_candidates = (
+                candidates.sort_values(by="score", ascending=False)
+                if "score" in candidates.columns
+                else candidates.sample(frac=1)
+            )
             return sorted_candidates.head(count).to_dict("records")
 
         query = " ".join(keywords)
-        query_embedding = embedding_model.encode(query)
 
-        filtered = candidates[candidates["embedding"].notnull()].copy()
-        if filtered.empty:
+        if (
+            self.embedding_model
+            and self.content_based_service
+            and "embedding" in candidates.columns
+        ):
+            filtered = candidates[candidates["embedding"].notnull()].copy()
+            if not filtered.empty:
+                try:
+                    query_embedding = self.embedding_model.encode(query)
+                    embeddings = np.stack(filtered["embedding"].values)
+                    similarities = cosine_similarity([query_embedding], embeddings)[0]
+
+                    filtered["similarity"] = similarities
+                    filtered["score"] = filtered.get("score", 0.0).fillna(0.0)
+                    filtered["final_score"] = (
+                        0.6 * filtered["similarity"] + 0.4 * filtered["score"]
+                    )
+
+                    return (
+                        filtered.sort_values(by="final_score", ascending=False)
+                        .head(count)
+                        .to_dict("records")
+                    )
+                except Exception as e:
+                    print("[Embedding Error] Falling back to TF-IDF:", e)
+
+        return self._select_by_tags_or_category_tfidf(keywords, count, candidates)
+
+    def _select_by_tags_or_category_tfidf(
+        self, keywords: List[str], count: int, candidates: pd.DataFrame
+    ) -> List[Dict]:
+        if "ingredients" not in candidates.columns:
             return []
 
-        candidate_embeddings = np.stack(filtered["embedding"].values)
-        similarities = cosine_similarity([query_embedding], candidate_embeddings)[0]
-        filtered["similarity"] = similarities
-
-        if "score" not in filtered.columns:
-            filtered["score"] = 0.0
-        else:
-            filtered["score"] = filtered["score"].fillna(0.0)
-
-        filtered["final_score"] = 0.6 * filtered["similarity"] + 0.4 * filtered["score"]
-
-        top_matches = filtered.sort_values(by="final_score", ascending=False).head(
-            count
+        processed = candidates.copy()
+        processed["ingredient_text"] = processed["ingredients"].apply(
+            lambda x: " ".join(x) if isinstance(x, (list, np.ndarray)) else ""
         )
-        return top_matches.to_dict("records")
+
+        valid = processed[processed["ingredient_text"].str.strip().astype(bool)]
+        if valid.empty:
+            print("[TF-IDF Warning] No valid ingredient data, using fallback.")
+            return candidates.sample(n=min(count, len(candidates))).to_dict("records")
+
+        try:
+            valid = valid.rename(columns={"ingredient_text": "combined_text"})
+            tfidf_model = self.content_based_service.build_tfidf_model(
+                valid, id_col="index"
+            )
+
+            query_vec = tfidf_model["vectorizer"].transform([" ".join(keywords)])
+            similarities = cosine_similarity(query_vec, tfidf_model["tfidf_matrix"])[0]
+        except Exception as e:
+            print("[TF-IDF Error]", e)
+            return candidates.sample(n=min(count, len(candidates))).to_dict("records")
+
+        valid["similarity"] = similarities
+        valid["score"] = valid.get("score", 0.0).fillna(0.0)
+        valid["final_score"] = 0.6 * valid["similarity"] + 0.4 * valid["score"]
+
+        return (
+            valid.sort_values(by="final_score", ascending=False)
+            .head(count)
+            .to_dict("records")
+        )
 
     def _select_by_category_key(
         self, key: str, count: int, candidates: pd.DataFrame
@@ -565,56 +615,81 @@ class HybridRecommendationService:
         inventory_action: str,
         inventory_df: pd.DataFrame,
         ingredient_expiry_map: Dict[str, datetime],
-        embedding_model,
         near_expiry_cutoff: datetime,
     ) -> pd.DataFrame:
+        candidates["score"] = 0.0
+
+        if inventory_df.empty or inventory_df["name"].dropna().empty:
+            print("[Inventory Strategy] No inventory available — skipping scoring.")
+            return candidates
+
         if inventory_action == "boost_inventory_match":
             names = inventory_df["name"].dropna().unique().tolist()
-            name_embeddings = embedding_model.encode(names, convert_to_numpy=True)
-            inventory_embeddings = {
-                name: vec for name, vec in zip(names, name_embeddings)
-            }
 
-            def semantic_inventory_match_score(ingredients):
+            def semantic_inventory_match_score(ingredients: List[str]) -> float:
                 if (
                     not isinstance(ingredients, (list, np.ndarray))
-                    or len(ingredients) == 0
+                    or np.size(ingredients) == 0
                 ):
                     return 0.0
-                ingredient_vectors = embedding_model.encode(
-                    ingredients, convert_to_numpy=True
-                )
-                match_scores = []
-                for vec in ingredient_vectors:
-                    similarities = [
-                        cosine_similarity([vec], [inv_vec])[0][0]
-                        for inv_vec in inventory_embeddings.values()
-                    ]
-                    if similarities:
-                        match_scores.append(max(similarities))
-                return sum(match_scores) / len(match_scores) if match_scores else 0.0
 
-            candidates["score"] = 0.0
+                if self.embedding_model:
+                    try:
+                        name_embeddings = self.embedding_model.encode(
+                            names, convert_to_numpy=True
+                        )
+                        inventory_embeddings = dict(zip(names, name_embeddings))
+
+                        ingredient_vecs = self.embedding_model.encode(
+                            ingredients, convert_to_numpy=True
+                        )
+                        return np.mean(
+                            [
+                                max(
+                                    cosine_similarity([ing_vec], [inv_vec])[0][0]
+                                    for inv_vec in inventory_embeddings.values()
+                                )
+                                for ing_vec in ingredient_vecs
+                            ]
+                        )
+                    except Exception as e:
+                        print("[Embedding Error] Falling back to TF-IDF:", e)
+
+                corpus_df = pd.DataFrame({"combined_text": names}).reset_index()
+                tfidf_model = self.content_based_service.build_tfidf_model(
+                    corpus_df, id_col="index"
+                )
+
+                try:
+                    query = " ".join(ingredients)
+                    query_vec = tfidf_model["vectorizer"].transform([query])
+                    sims = cosine_similarity(query_vec, tfidf_model["tfidf_matrix"])[0]
+                    return max(sims) if sims.size > 0 else 0.0
+                except Exception as e:
+                    print("[TF-IDF Error]", e)
+                    return 0.0
+
             candidates["semantic_score"] = candidates["ingredients"].apply(
                 semantic_inventory_match_score
             )
             candidates["score"] += 0.7 * candidates["semantic_score"]
+            print("[Inventory Strategy] Applied embedding/TF-IDF similarity scoring.")
 
         elif inventory_action == "prioritize_near_expiry":
 
-            def near_expiry_score(ingredients):
-                for i in ingredients:
-                    if (
+            def near_expiry_score(ingredients: List[str]) -> float:
+                return float(
+                    any(
                         i in ingredient_expiry_map
                         and ingredient_expiry_map[i] <= near_expiry_cutoff
-                    ):
-                        return 1.0
-                return 0.0
+                        for i in ingredients
+                    )
+                )
 
-            candidates["score"] = 0.0
             candidates["near_expiry_score"] = candidates["ingredients"].apply(
                 near_expiry_score
             )
             candidates["score"] += candidates["near_expiry_score"]
+            print("[Inventory Strategy] Applied near-expiry boost scoring.")
 
         return candidates

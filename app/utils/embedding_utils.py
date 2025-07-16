@@ -4,14 +4,21 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
-from sentence_transformers import SentenceTransformer
 
 CACHE_DIR = "app/cache"
 MAX_AGE_DAYS = 7
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+try:
+    # NOTE: This block will be skipped on Render free tier due to memory/storage limits.
+    # If sentence-transformers is unavailable (not in requirements), embedding will be disabled.
+    from sentence_transformers import SentenceTransformer
+
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+except ImportError:
+    embedding_model = None
+    print("[NOTE] sentence-transformers not found. Embedding is disabled.")
 
 
 def load_or_embed(
@@ -37,6 +44,10 @@ def load_or_embed(
 
     needs_embedding = df["embedding"].isna() | df["embedding_ts"].lt(age_cutoff)
 
+    if embedding_model is None:
+        print("[Embedding] Skipping embedding step because model is not available.")
+        return df
+
     if needs_embedding.any():
         print(
             f"[Embedding] Re-embedding {needs_embedding.sum()} stale/missing rows for {name}..."
@@ -57,6 +68,8 @@ def load_or_embed(
 
 
 def _get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
+    if embedding_model is None:
+        raise RuntimeError("Embedding model is not available.")
     return list(
         embedding_model.encode(texts, batch_size=batch_size, convert_to_numpy=True)
     )
