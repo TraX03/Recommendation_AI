@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import minmax_scale
 
+from app import dependencies
 from app.agents.feed_agent import choose_feed_fallback_action
 from app.agents.inventory_agent import choose_inventory_action
 from app.constants import (
@@ -16,9 +17,7 @@ from app.constants import (
     TAG_CATEGORIES,
 )
 from app.models.schemas import PostList
-from app.services.content_based_service import ContentBasedService
 from app.utils.appwrite_client import create_or_update_document, get_document_by_id
-from app.utils.embedding_utils import get_embedding_model
 from app.utils.filtering_utils import (
     filter_avoid_ingredients,
     filter_diet,
@@ -29,8 +28,9 @@ from app.utils.tag_utils import get_inferred_tags
 
 
 class HybridRecommendationService:
-    def __init__(self, content_based_service: ContentBasedService):
-        self.content_based_service = content_based_service
+    def __init__(self, build_tfidf_model, build_user_profile_vector):
+        self.build_tfidf_model = build_tfidf_model
+        self.build_user_profile_vector = build_user_profile_vector
         self.last_used_strategies = {}
 
     def get_last_strategy(self, user_id: str) -> Optional[str]:
@@ -383,7 +383,7 @@ class HybridRecommendationService:
 
         # User profile CBF scoring
         user_scores = minmax_scale(
-            self.content_based_service.build_user_profile_vector(
+            self.build_user_profile_vector(
                 user_interactions=user_interactions,
                 data_map={content_type: content_df},
                 prefs=prefs,
@@ -481,8 +481,8 @@ class HybridRecommendationService:
 
         query = " ".join(keywords)
 
-        model = get_embedding_model()
-        if model and self.content_based_service and "embedding" in candidates.columns:
+        model = dependencies.embedding_model
+        if model and "embedding" in candidates.columns:
             filtered = candidates[candidates["embedding"].notnull()].copy()
             if not filtered.empty:
                 try:
@@ -524,9 +524,7 @@ class HybridRecommendationService:
 
         try:
             valid = valid.rename(columns={"ingredient_text": "combined_text"})
-            tfidf_model = self.content_based_service.build_tfidf_model(
-                valid, id_col="index"
-            )
+            tfidf_model = self.build_tfidf_model(valid, id_col="index")
 
             query_vec = tfidf_model["vectorizer"].transform([" ".join(keywords)])
             similarities = cosine_similarity(query_vec, tfidf_model["tfidf_matrix"])[0]
@@ -625,7 +623,7 @@ class HybridRecommendationService:
                 ):
                     return 0.0
 
-                model = get_embedding_model()
+                model = dependencies.embedding_model
                 if model:
                     name_embeddings = model.encode(names, convert_to_numpy=True)
                     inventory_embeddings = dict(zip(names, name_embeddings))
@@ -642,9 +640,7 @@ class HybridRecommendationService:
                     )
 
                 corpus_df = pd.DataFrame({"combined_text": names}).reset_index()
-                tfidf_model = self.content_based_service.build_tfidf_model(
-                    corpus_df, id_col="index"
-                )
+                tfidf_model = self.build_tfidf_model(corpus_df, id_col="index")
 
                 try:
                     query = " ".join(ingredients)

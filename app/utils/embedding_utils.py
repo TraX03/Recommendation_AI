@@ -4,38 +4,13 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
-from sentence_transformers import SentenceTransformer
+
+from app import dependencies
 
 CACHE_DIR = "app/cache"
 MAX_AGE_DAYS = 7
 
 os.makedirs(CACHE_DIR, exist_ok=True)
-
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
-
-_embedding_model = None
-
-
-def get_embedding_model():
-    global _embedding_model
-
-    if SentenceTransformer is None:
-        # NOTE: Embedding is disabled (likely due to missing package or platform limits, e.g., Render Free tier).
-        print("[Embedding] SentenceTransformer is unavailable. Embedding is disabled.")
-        return None
-
-    if _embedding_model is None:
-        try:
-            print("[Embedding] Loading SentenceTransformer model...")
-            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception as e:
-            print("[Embedding Error] Failed to load model:", e)
-            return None
-
-    return _embedding_model
 
 
 def load_or_embed(
@@ -61,8 +36,7 @@ def load_or_embed(
 
     needs_embedding = df["embedding"].isna() | df["embedding_ts"].lt(age_cutoff)
 
-    model = get_embedding_model()
-    if model is None:
+    if dependencies.embedding_model is None:
         print("[Embedding] Skipping embedding step because model is not available.")
         return df
 
@@ -86,7 +60,7 @@ def load_or_embed(
 
 
 def _get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
-    model = get_embedding_model()
+    model = dependencies.embedding_model
     if model is None:
         raise RuntimeError("Embedding model is not available.")
     return list(model.encode(texts, batch_size=batch_size, convert_to_numpy=True))

@@ -23,7 +23,8 @@ class Recommender:
         self.feedback_service = FeedbackService()
 
         self.hybrid_service = HybridRecommendationService(
-            content_based_service=self.content_service,
+            build_tfidf_model=self.content_service.build_tfidf_model,
+            build_user_profile_vector=self.content_service.build_user_profile_vector,
         )
 
     def refresh_models(self):
