@@ -1,3 +1,4 @@
+import gc
 import json
 import random
 from datetime import datetime, timedelta
@@ -8,7 +9,6 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import minmax_scale
 
-from app import dependencies
 from app.agents.feed_agent import choose_feed_fallback_action
 from app.agents.inventory_agent import choose_inventory_action
 from app.constants import (
@@ -18,6 +18,7 @@ from app.constants import (
 )
 from app.models.schemas import PostList
 from app.utils.appwrite_client import create_or_update_document, get_document_by_id
+from app.utils.embedding_utils import get_embedding_model
 from app.utils.filtering_utils import (
     filter_avoid_ingredients,
     filter_diet,
@@ -259,33 +260,41 @@ class HybridRecommendationService:
 
         if is_combo_mealtime:
             if staple != "none":
-                selected += [
-                    {**r, "source": "staple"}
-                    for r in self._select_by_tags_or_category([staple], 1, candidates)
-                ]
+                staple_recipes = self._select_by_tags_or_category(
+                    [staple], 1, candidates
+                )
+                selected += [{**r, "source": "staple"} for r in staple_recipes]
+                selected_ids = [r["recipe_id"] for r in staple_recipes]
+                candidates = candidates[~candidates["recipe_id"].isin(selected_ids)]
             else:
                 dish_count = 0
         else:
-            selected += [
-                {**r, "source": "general"}
-                for r in self._select_by_tags_or_category([], dish_count, candidates)
-            ]
+            general_recipes = self._select_by_tags_or_category(
+                [], dish_count, candidates
+            )
+            selected += [{**r, "source": "general"} for r in general_recipes]
+            selected_ids = [r["recipe_id"] for r in general_recipes]
+            candidates = candidates[~candidates["recipe_id"].isin(selected_ids)]
 
         for key in ["meat", "vege"]:
             count = config.get(f"{key}Count", 0)
             if count > 0:
-                selected += [
-                    {**r, "source": key}
-                    for r in self._select_by_category_key(key, count, candidates)
-                ]
+                key_recipes = self._select_by_category_key(key, count, candidates)
+                selected += [{**r, "source": key} for r in key_recipes]
+                selected_ids = [r["recipe_id"] for r in key_recipes]
+                candidates = candidates[~candidates["recipe_id"].isin(selected_ids)]
 
         for key in ["soup", "side"]:
             if config.get(key):
                 count = config.get(f"{key}Count", 1)
-                selected += [
-                    {**r, "source": key}
-                    for r in self._select_by_category_key(key, count, candidates)
-                ]
+                key_recipes = self._select_by_category_key(key, count, candidates)
+                selected += [{**r, "source": key} for r in key_recipes]
+                selected_ids = [r["recipe_id"] for r in key_recipes]
+                candidates = candidates[~candidates["recipe_id"].isin(selected_ids)]
+
+        if "embedding" in candidates.columns:
+            del candidates["embedding"]
+            gc.collect()
 
         session_data = [
             {
@@ -481,7 +490,7 @@ class HybridRecommendationService:
 
         query = " ".join(keywords)
 
-        model = dependencies.embedding_model
+        model = get_embedding_model()
         if model and "embedding" in candidates.columns:
             filtered = candidates[candidates["embedding"].notnull()].copy()
             if not filtered.empty:
@@ -623,7 +632,7 @@ class HybridRecommendationService:
                 ):
                     return 0.0
 
-                model = dependencies.embedding_model
+                model = get_embedding_model()
                 if model:
                     name_embeddings = model.encode(names, convert_to_numpy=True)
                     inventory_embeddings = dict(zip(names, name_embeddings))

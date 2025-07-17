@@ -14,14 +14,12 @@ from app.utils.background_tasks import start_background_tasks
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[Startup] Initializing engine...")
-
     engine = Recommender()
     await start_background_tasks()
 
     dependencies.engine = engine
 
     yield
-
     dependencies.engine = None
     dependencies.embedding_model = None
 

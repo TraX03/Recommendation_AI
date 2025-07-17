@@ -4,6 +4,7 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
+from sentence_transformers import SentenceTransformer
 
 from app import dependencies
 
@@ -11,6 +12,14 @@ CACHE_DIR = "app/cache"
 MAX_AGE_DAYS = 7
 
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+def get_embedding_model():
+    if dependencies.embedding_model is None:
+        dependencies.embedding_model = SentenceTransformer(
+            "paraphrase-MiniLM-L3-v2", device="cpu"
+        )
+    return dependencies.embedding_model
 
 
 def load_or_embed(
@@ -36,7 +45,8 @@ def load_or_embed(
 
     needs_embedding = df["embedding"].isna() | df["embedding_ts"].lt(age_cutoff)
 
-    if dependencies.embedding_model is None:
+    model = get_embedding_model()
+    if model is None:
         print("[Embedding] Skipping embedding step because model is not available.")
         return df
 
@@ -59,16 +69,22 @@ def load_or_embed(
     return df
 
 
-def _get_local_embeddings(texts: List[str], batch_size: int = 32) -> List[np.ndarray]:
-    model = dependencies.embedding_model
+def _get_local_embeddings(texts: List[str], batch_size: int = 8) -> List[np.ndarray]:
+    model = get_embedding_model()
     if model is None:
         raise RuntimeError("Embedding model is not available.")
-    return list(model.encode(texts, batch_size=batch_size, convert_to_numpy=True))
+
+    embeddings = model.encode(
+        texts,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    ).astype(np.float16)
+
+    return list(embeddings)
 
 
-def _embed_batches(
-    texts: List[str], batch_size: int = 100
-) -> List[Optional[np.ndarray]]:
+def _embed_batches(texts: List[str], batch_size: int = 8) -> List[Optional[np.ndarray]]:
     embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
