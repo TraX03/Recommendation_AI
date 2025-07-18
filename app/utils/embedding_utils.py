@@ -4,8 +4,6 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
-import torch
-from sentence_transformers import SentenceTransformer
 
 from app import dependencies
 
@@ -16,14 +14,16 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 def get_embedding_model():
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        # If the import fails due to free-tier Render hosting limitations (memory issues),
+        # set embedding_model to None to avoid deployment errors
+        dependencies.embedding_model = None
+        return None
+
     if dependencies.embedding_model is None:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        model.to(torch.device(device))
-
-        dependencies.embedding_model = model
+        dependencies.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
     return dependencies.embedding_model
 
@@ -42,6 +42,10 @@ def load_or_embed(
         df = fetch_func().copy()
         df["embedding"] = None
         df["embedding_ts"] = None
+
+    if df.empty:
+        print(f"[Embedding] DataFrame for '{name}' is empty. Returning as is.")
+        return df
 
     if text_column not in df.columns:
         raise ValueError(f"DataFrame must include '{text_column}' column")

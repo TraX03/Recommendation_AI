@@ -68,17 +68,32 @@ class ContentBasedService:
         ]
 
         keywords = []
-        if not strong.empty:
-            item_ids = strong["item_id"].unique()
-            id_col = CONTENT_TYPE_MAP["recipe"]["id_col"]
-            matched = data_map["recipe"][data_map["recipe"][id_col].isin(item_ids)]
 
-            for _, row in matched.iterrows():
-                keywords += (
-                    row.get("tags", [])
-                    + row.get("title", "").lower().split()
-                    + row.get("description", "").lower().split()
-                )
+        for content_type in ["recipe", "tip", "discussion"]:
+            if content_type not in data_map:
+                continue
+
+            if not strong.empty:
+                item_ids = strong["item_id"].unique()
+                id_col = CONTENT_TYPE_MAP.get(content_type, {}).get("id_col")
+                if not id_col:
+                    continue
+                matched = data_map[content_type][
+                    data_map[content_type][id_col].isin(item_ids)
+                ]
+
+                for _, row in matched.iterrows():
+                    tags = row.get("tags", [])
+
+                    if not isinstance(tags, list):
+                        tags = [tags]
+
+                    keywords += tags
+
+                    title = row.get("title", "").lower().split()
+                    description = row.get("description", "").lower().split()
+
+                    keywords += title + description
 
         for key in ["diet", "region_pref", "tags"]:
             values = prefs.get(key)
@@ -98,4 +113,8 @@ class ContentBasedService:
 
         profile_text = " ".join(clean_keywords)
         user_vector = tfidf_model["vectorizer"].transform([profile_text])
-        return cosine_similarity(user_vector, tfidf_model["tfidf_matrix"]).flatten()
+        similarity = cosine_similarity(
+            user_vector, tfidf_model["tfidf_matrix"]
+        ).flatten()
+
+        return similarity
