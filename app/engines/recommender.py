@@ -8,7 +8,6 @@ from app.services.coldstart_service import ColdStartService
 from app.services.collaborative_service import CollaborativeService
 from app.services.content_based_service import ContentBasedService
 from app.services.feedback_service import FeedbackService
-from app.services.hybrid_recommendation_service import HybridRecommendationService
 from app.services.interaction_service import InteractionService
 from app.utils.data_loader import load_data_map
 from app.utils.session_utils import clear_session, get_session_start
@@ -16,6 +15,10 @@ from app.utils.session_utils import clear_session, get_session_start
 
 class Recommender:
     def __init__(self):
+        from app.services.hybrid_recommendation_service import (
+            HybridRecommendationService,
+        )
+
         self.coldstart_service = ColdStartService()
         self.interaction_service = InteractionService()
         self.content_service = ContentBasedService()

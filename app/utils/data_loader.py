@@ -22,7 +22,6 @@ from app.utils.appwrite_client import (
     list_documents,
     update_document,
 )
-from app.utils.embedding_utils import load_or_embed
 
 
 def clean(text):
@@ -35,6 +34,10 @@ def clean(text):
 
 
 def load_data_map() -> Dict[str, pd.DataFrame]:
+    from app.utils.embedding_utils import (
+        load_or_embed,
+    )
+
     tips_df, discussion_df = fetch_post_data()
 
     return {

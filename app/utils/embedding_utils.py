@@ -4,6 +4,7 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
+import torch
 from sentence_transformers import SentenceTransformer
 
 from app import dependencies
@@ -16,9 +17,14 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 def get_embedding_model():
     if dependencies.embedding_model is None:
-        dependencies.embedding_model = SentenceTransformer(
-            "paraphrase-MiniLM-L3-v2", device="cpu"
-        )
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        model.to(torch.device(device))
+
+        dependencies.embedding_model = model
+
     return dependencies.embedding_model
 
 
