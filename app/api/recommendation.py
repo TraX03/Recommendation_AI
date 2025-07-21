@@ -29,10 +29,10 @@ def recommend_for_home(user_id: str) -> RecommendationResponse:
     start_session(user_id)
 
     return RecommendationResponse(
-        recipe=engine.recommend(user_id, "recipe", prefs, 100),
-        tip=engine.recommend(user_id, "tip", prefs, 100),
-        discussion=engine.recommend(user_id, "discussion", prefs, 100),
-        community=engine.recommend(user_id, "community", prefs, 30),
+        recipe=engine.recommend(user_id, "recipe", prefs, 50),
+        tip=engine.recommend(user_id, "tip", prefs, 50),
+        discussion=engine.recommend(user_id, "discussion", prefs, 50),
+        community=engine.recommend(user_id, "community", prefs, 20),
     )
 
 

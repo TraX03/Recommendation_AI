@@ -49,6 +49,7 @@ class HybridRecommendationService:
         max_count: int,
     ) -> PostList:
         id_col = CONTENT_TYPE_MAP[content_type]["id_col"]
+
         cf_matrix = cf_models.get(content_type)
         sim_model = sim_models.get(content_type)
 
@@ -83,6 +84,7 @@ class HybridRecommendationService:
             ignore_index=True,
         ).drop_duplicates(subset=id_col)
 
+        region_filtered_out = None
         if content_type == "recipe":
             recs, region_filtered_out = self._apply_recipe_filters(recs, prefs)
 
@@ -580,7 +582,6 @@ class HybridRecommendationService:
 
         elif strategy == "use_tags":
             tags = prefs.get("inferred_tags", [])
-
             if "tags" in data_map[content_type].columns:
                 data_map[content_type]["tags"] = data_map[content_type]["tags"].apply(
                     lambda x: x.tolist() if isinstance(x, np.ndarray) else x
@@ -599,7 +600,7 @@ class HybridRecommendationService:
                 print("[WARN] 'tags' column missing in data")
 
         elif strategy == "use_full_dataset":
-            full_df = data_map.get("recipe", pd.DataFrame())
+            full_df = data_map.get(content_type, pd.DataFrame())
             full_df = full_df.sample(frac=1, random_state=42).reset_index(drop=True)
             recs = pd.concat([recs, full_df]).drop_duplicates(subset=id_col)
 

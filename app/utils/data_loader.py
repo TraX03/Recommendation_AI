@@ -128,6 +128,7 @@ def fetch_post_data() -> tuple[pd.DataFrame, pd.DataFrame]:
             "author_id": doc.get("author_id", ""),
             "image": doc.get("image", [""])[0] if doc.get("image") else "",
             "combined_text": " ".join(map(clean, [title, content] + tags)),
+            "tags": tags,
         }
 
         if post_type == "tips":
@@ -156,6 +157,7 @@ def fetch_community_data() -> pd.DataFrame:
                 "name": name,
                 "image": doc.get("image", ""),
                 "combined_text": " ".join(map(clean, [name, description] + tags)),
+                "tags": tags,
             }
         )
 
