@@ -156,7 +156,13 @@ class HybridRecommendationService:
             expiries = row.get("expiries", []) or []
             if isinstance(expiries, list) and expiries:
                 try:
-                    parsed = pd.to_datetime(expiries, errors="coerce").dropna()
+                    parsed = (
+                        pd.to_datetime(expiries, errors="coerce")
+                        .dt.tz_localize(
+                            "Asia/Kuala_Lumpur", ambiguous="NaT", nonexistent="NaT"
+                        )
+                        .dropna()
+                    )
                     if not parsed.empty:
                         ingredient_expiry_map[name] = parsed.min()
                 except Exception:
@@ -207,9 +213,6 @@ class HybridRecommendationService:
                 cf_matrix=cf_matrix,
                 content_df=recipe_df,
                 user_interactions=interactions_df,
-                item_cbf_weight=0.4,
-                user_cbf_weight=0.3,
-                cf_weight=0.3,
                 top_k=100,
                 sample_n=30,
             )
@@ -535,10 +538,15 @@ class HybridRecommendationService:
 
         try:
             valid = valid.rename(columns={"ingredient_text": "combined_text"})
-            tfidf_model = self.build_tfidf_model(valid, id_col="index")
+            valid = valid.loc[:, ~valid.columns.duplicated()]
+            valid = valid.reset_index(drop=True)
+            valid["index"] = valid.index
 
-            query_vec = tfidf_model["vectorizer"].transform([" ".join(keywords)])
+            tfidf_model = self.build_tfidf_model(valid, id_col="index")
+            query_text = " ".join(keywords)
+            query_vec = tfidf_model["vectorizer"].transform([query_text])
             similarities = cosine_similarity(query_vec, tfidf_model["tfidf_matrix"])[0]
+
         except Exception as e:
             print("[TF-IDF Error]", e)
             return candidates.sample(n=min(count, len(candidates))).to_dict("records")
@@ -658,7 +666,7 @@ class HybridRecommendationService:
                     sims = cosine_similarity(query_vec, tfidf_model["tfidf_matrix"])[0]
                     return max(sims) if sims.size > 0 else 0.0
                 except Exception as e:
-                    print("[TF-IDF Error]", e)
+                    print("[TF-IDF Error (Q-learning)]", e)
                     return 0.0
 
             candidates["semantic_score"] = candidates["ingredients"].apply(

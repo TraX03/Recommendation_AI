@@ -1,11 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
+from dateutil.parser import isoparse
 
 from app.agents.q_learning_agent import QLearningAgent
 
 INVENTORY_ACTIONS = [
     "boost_inventory_match",
-    "ignore_inventory",
     "prioritize_near_expiry",
 ]
 
@@ -50,8 +51,8 @@ def update_inventory_feedback(
             continue
 
         try:
-            timestamp = datetime.fromisoformat(timestamp_str)
-        except ValueError:
+            timestamp = isoparse(timestamp_str).astimezone(timezone.utc)
+        except (ValueError, TypeError):
             continue
 
         if feedback is None:
@@ -73,11 +74,9 @@ def calculate_inventory_reward(
     regenerated: bool = False,
     idle_threshold: timedelta = timedelta(hours=6),
 ) -> float:
-    now = datetime.now()
+    now = datetime.now(timestamp.tzinfo or timezone.utc)
 
-    if feedback == "cooked":
-        return 1.0
-    elif regenerated:
+    if regenerated:
         return -1.0
     elif feedback is None and (now - timestamp) > idle_threshold:
         return 0.5

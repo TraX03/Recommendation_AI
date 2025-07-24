@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -42,37 +42,31 @@ def test_choose_inventory_action_calls_agent(mock_agent):
     assert mock_agent.get_action.called
 
 
-def test_calculate_inventory_reward_cooked():
-    ts = datetime.now()
-    reward = calculate_inventory_reward("cooked", ts)
-    assert reward == 1.0
-
-
 def test_calculate_inventory_reward_regenerated():
-    ts = datetime.now()
+    ts = datetime.now(timezone.utc)
     reward = calculate_inventory_reward("soft_reward", ts, regenerated=True)
     assert reward == -1.0
 
 
 def test_calculate_inventory_reward_idle():
-    ts = datetime.now() - timedelta(hours=7)
+    ts = datetime.now(timezone.utc) - timedelta(hours=7)
     reward = calculate_inventory_reward(None, ts)
     assert reward == 0.5
 
 
 def test_calculate_inventory_reward_default():
-    ts = datetime.now()
+    ts = datetime.now(timezone.utc)
     reward = calculate_inventory_reward("soft_reward", ts)
     assert reward == 0.0
 
 
 def test_update_inventory_feedback_applies_rewards(mock_agent):
-    timestamp = (datetime.now() - timedelta(minutes=1)).isoformat()
+    timestamp = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     session_data = [
         {
             "timestamp": timestamp,
             "feedback": None,
-            "action": "ignore_inventory",
+            "action": "boost_inventory_match",
             "available_ingredients": ["rice"],
             "mealtime": "lunch",
         }
@@ -88,7 +82,7 @@ def test_update_inventory_feedback_skips_invalid(mock_agent):
     session_data = [
         {"timestamp": None, "action": "boost_inventory_match"},
         {"timestamp": "invalid", "action": "boost_inventory_match"},
-        {"timestamp": datetime.now().isoformat(), "action": None},
+        {"timestamp": datetime.now(timezone.utc).isoformat(), "action": None},
     ]
     updated = update_inventory_feedback(session_data)
     assert updated == []

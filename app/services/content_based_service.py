@@ -31,8 +31,9 @@ class ContentBasedService:
             return tfidf_model
 
     def build_tfidf_model(self, df: pd.DataFrame, id_col: str) -> Dict:
+        texts = df["combined_text"].fillna("").astype(str).tolist()
         tfidf = TfidfVectorizer(stop_words="english")
-        tfidf_matrix = tfidf.fit_transform(df["combined_text"].fillna(""))
+        tfidf_matrix = tfidf.fit_transform(texts)
         cosine_sim = cosine_similarity(tfidf_matrix)
         indices = pd.Series(df.index, index=df[id_col]).drop_duplicates()
 
@@ -62,10 +63,15 @@ class ContentBasedService:
         prefs: Dict,
         tfidf_model: Dict,
     ) -> np.ndarray:
-        strong = user_interactions[
-            (user_interactions["type"].isin(["bookmark", "like"]))
-            | (user_interactions.get("rating", 0) >= 7.0)
-        ]
+        if "score" in user_interactions.columns:
+            strong = user_interactions[
+                (user_interactions["type"].isin(["bookmark", "like"]))
+                | (user_interactions["score"].fillna(0) >= 7.0)
+            ]
+        else:
+            strong = user_interactions[
+                user_interactions["type"].isin(["bookmark", "like"])
+            ]
 
         keywords = []
 
@@ -103,7 +109,7 @@ class ContentBasedService:
                 keywords.append(values)
 
         clean_keywords = [
-            re.sub(r"[\s\-]", "", str(k).strip().lower())
+            re.sub(r"\s+", " ", str(k).strip().lower())
             for k in keywords
             if isinstance(k, str) and k.strip()
         ]
